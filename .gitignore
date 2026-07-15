@@ -1,3 +1,8 @@
+01_PRD.md
+02_TECHNICAL_ARCHITECTURE.md
+03_SECURITY_AND_ACCESS.md
+04_FRONTEND_SPEC.md
+
 .venv/
 __pycache__/
 *.pyc
