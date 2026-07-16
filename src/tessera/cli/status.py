@@ -51,23 +51,21 @@ def status_command(ctx: click.Context, name: str | None, mirror: str | None) -> 
         return results
 
     results = asyncio.run(run())
+    any_revoked = any(a["revoked"] for entry in results for a in entry["artifacts"])
 
     if ctx.obj.get("json"):
         click.echo(json.dumps({"tessera": "status/v1", "publishers": results}))
-        return
-
-    any_revoked = False
-    for entry in results:
-        if entry.get("error"):
-            click.echo(f"{entry['publisher']}: could not check ({entry['error']})")
-            continue
-        if not entry["artifacts"]:
-            click.echo(f"{entry['publisher']}: no materialized artifacts")
-            continue
-        for a in entry["artifacts"]:
-            flag = "REVOKED" if a["revoked"] else "ok"
-            click.echo(f"{entry['publisher']}/{a['artifact']}@{a['version']}  {flag}  ({a['manifest_digest']})")
-            any_revoked = any_revoked or a["revoked"]
+    else:
+        for entry in results:
+            if entry.get("error"):
+                click.echo(f"{entry['publisher']}: could not check ({entry['error']})")
+                continue
+            if not entry["artifacts"]:
+                click.echo(f"{entry['publisher']}: no materialized artifacts")
+                continue
+            for a in entry["artifacts"]:
+                flag = "REVOKED" if a["revoked"] else "ok"
+                click.echo(f"{entry['publisher']}/{a['artifact']}@{a['version']}  {flag}  ({a['manifest_digest']})")
 
     if any_revoked:
         raise SystemExit(1)
