@@ -3,20 +3,36 @@
 network), then V8 and V9 recomputed over local bytes already on disk.
 Never mutates `verified/` -- this command answers "is this file the signed
 artifact?", it does not materialize anything.
+
+Deliberately does NOT enforce the rollback high-water marks `fetch_flow.py`
+does: `verify` checks a specific, named reference against what the
+publisher signed for it, which is a legitimate thing to ask about an old
+version long after a newer one exists (e.g. auditing an old backup). hwm
+enforcement is about "give me the current, freshest artifact" -- `fetch`'s
+job, not this one -- so `verify` never calls
+`trust_store.check_and_advance_*` and always passes the default
+`min_version=0`/`min_seq=0`.
+
+Only the network-fallback path (nothing cached, a client was given) runs
+V4/V5 (`freshness.py`) to resolve an uncached reference via the signed
+snapshot, exactly like `fetch_flow.py` -- there is no other mechanism left
+to do that resolution now that the M1 `/current` bridge is gone. The
+common case (a reference already fetched once) stays fully offline and
+never touches V4/V5 at all.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from . import freshness
 from .chunking import compute_file_digest, iter_chunks
-from .errors import DigestMismatchError, ExitCode, NetworkError, TesseraError, UsageError
+from .errors import DigestMismatchError, ExitCode, NetworkError, ReferenceNotFoundError, TesseraError, UsageError
 from .fetch_flow import parse_ref
-from .result import build_result, check_fail, check_ok
 from .httpclient import OriginClient
 from .manifest import verify_manifest_envelope
 from .quarantine import quarantine_file
-from .resolve import resolve_manifest_digest
+from .result import build_result, check_fail, check_ok
 from .root import authorized_keys_for_role, verify_root_doc
 from .trust_store import (
     cache_manifest,
@@ -62,6 +78,42 @@ def _check_local_file(home: Path, file_entry: dict, file_path: Path) -> None:
     raise DigestMismatchError(detail, evidence=qdir, expected=file_entry["digest"], actual=recomputed)
 
 
+async def _resolve_manifest_over_network(
+    home: Path, client: OriginClient, publisher_name: str, fingerprint: str, artifact: str, version: str
+) -> tuple[str, dict]:
+    """V4 + V5 + snapshot lookup, used only when nothing is cached. Returns
+    (expected_digest, manifest_envelope). Note: this does advance the
+    publisher-wide timestamp high-water mark (freshness.py's job) -- that's
+    fine, since it's about detecting a stale/equivocating overall snapshot
+    pointer, not about which specific artifact version is being checked.
+    The per-artifact manifest seq rollback check is deliberately skipped
+    (see module docstring): `verify_manifest_envelope` is called below with
+    no `min_seq`, so verifying an intentionally old reference never fails
+    just because a newer version has since been fetched.
+    """
+    root_envelope = await client.get_root(fingerprint, 1)
+    if root_envelope is None:
+        raise NetworkError(f"origin has no root document for {fingerprint}", peer=client.base_url)
+    root_doc = verify_root_doc(root_envelope, pinned_fingerprint=fingerprint)
+
+    authorized_timestamp = authorized_keys_for_role(root_doc, "timestamp")
+    timestamp_stmt = await freshness.fetch_verified_timestamp(
+        home, client, publisher_name, fingerprint, authorized_timestamp
+    )
+    snapshot_doc = await freshness.fetch_verified_snapshot(client, fingerprint, timestamp_stmt["snapshot"])
+
+    artifact_entry = snapshot_doc.get("artifacts", {}).get(artifact)
+    version_entry = artifact_entry.get("versions", {}).get(version) if artifact_entry else None
+    if version_entry is None:
+        raise ReferenceNotFoundError(f"{artifact}@{version} not found in snapshot for {fingerprint}")
+    expected_digest = version_entry["manifest_digest"]
+
+    manifest_envelope = await client.get_manifest(expected_digest)
+    if manifest_envelope is None:
+        raise NetworkError(f"manifest {expected_digest} not found at origin", peer=client.base_url)
+    return expected_digest, manifest_envelope
+
+
 async def verify(home: Path, path: Path, ref: str, client: OriginClient | None = None) -> dict:
     checks: list[dict] = []
 
@@ -96,7 +148,7 @@ async def verify(home: Path, path: Path, ref: str, client: OriginClient | None =
     cache_root_envelope(home, publisher_name, root_envelope)
     check_ok(checks, "V2", f"root v{root_doc['root_version']}")
 
-    # V6: manifest from cache, or network if a client was given.
+    # V6: manifest from cache; V4+V5+snapshot lookup only on a cache miss.
     try:
         cached = load_cached_manifest(home, publisher_name, artifact, version)
         if cached is not None:
@@ -104,10 +156,9 @@ async def verify(home: Path, path: Path, ref: str, client: OriginClient | None =
         else:
             if client is None:
                 raise NetworkError("no cached manifest and no network client available")
-            expected_digest = await resolve_manifest_digest(client, fingerprint, artifact, version)
-            manifest_envelope = await client.get_manifest(expected_digest)
-            if manifest_envelope is None:
-                raise NetworkError(f"manifest {expected_digest} not found at origin", peer=client.base_url)
+            expected_digest, manifest_envelope = await _resolve_manifest_over_network(
+                home, client, publisher_name, fingerprint, artifact, version
+            )
             source = "network"
 
         authorized_release = authorized_keys_for_role(root_doc, "release")
