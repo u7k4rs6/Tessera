@@ -16,11 +16,14 @@ TestServer) throughout.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from pathlib import Path
 
+import aiohttp
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestServer
 from click.testing import CliRunner
 
@@ -63,8 +66,9 @@ def workspace(tmp_path, monkeypatch):
 
 
 async def _publish_fixture_artifact(runner: CliRunner, workspace: dict) -> str:
-    """Run keygen -> publisher init -> delegate -> publish through the real
-    CLI. Returns the publisher fingerprint.
+    """Run keygen -> publisher init -> delegate(release+timestamp) ->
+    publish -> origin reissue-timestamp through the real CLI. Returns the
+    publisher fingerprint.
     """
     keys_dir = workspace["keys"]
     origin = workspace["origin"]
@@ -79,6 +83,9 @@ async def _publish_fixture_artifact(runner: CliRunner, workspace: dict) -> str:
     assert result.exit_code == 0, result.output
 
     result = await invoke(runner, ["keygen", "--role", "release", "--out", str(keys_dir / "release.key")], passphrase="releasepass")
+    assert result.exit_code == 0, result.output
+
+    result = await invoke(runner, ["keygen", "--role", "timestamp", "--out", str(keys_dir / "ts.key")], passphrase="tspass")
     assert result.exit_code == 0, result.output
 
     result = await invoke(
@@ -104,11 +111,30 @@ async def _publish_fixture_artifact(runner: CliRunner, workspace: dict) -> str:
     result = await invoke(
         runner,
         [
+            "publisher", "delegate", "--role", "timestamp",
+            "--key", str(keys_dir / "ts.key.pub"),
+            "--root-key", str(keys_dir / "root.key"),
+            "--store", str(origin),
+        ],
+        passphrase="rootpass",
+    )
+    assert result.exit_code == 0, result.output
+
+    result = await invoke(
+        runner,
+        [
             "publish", str(src),
             "--name", "bert-tiny", "--version", "1.2.0", "--type", "model",
             "--release-key", str(keys_dir / "release.key"), "--store", str(origin),
         ],
         passphrase="releasepass",
+    )
+    assert result.exit_code == 0, result.output
+
+    result = await invoke(
+        runner,
+        ["origin", "reissue-timestamp", "--store", str(origin), "--timestamp-key", str(keys_dir / "ts.key")],
+        passphrase="tspass",
     )
     assert result.exit_code == 0, result.output
 
@@ -132,7 +158,7 @@ async def test_publish_fetch_verify_end_to_end(runner, workspace):
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload["ok"] is True
-        assert {c["id"] for c in payload["checks"]} == {"V1", "V2", "V6", "V8", "V9"}
+        assert {c["id"] for c in payload["checks"]} == {"V1", "V2", "V4", "V5", "V6", "V8", "V9"}
         assert all(c["ok"] for c in payload["checks"])
 
         materialized = Path(payload["materialized"])
@@ -148,6 +174,77 @@ async def test_publish_fetch_verify_end_to_end(runner, workspace):
         await server.close()
 
 
+async def _start_tampering_proxy(upstream_base_url: str, tamper_digest: str) -> TestServer:
+    """A minimal in-process on-path attacker in front of `upstream_base_url`,
+    corrupting the response body for any request path containing
+    `tamper_digest`. Standalone copy of the same pattern used by
+    tests/adversarial/conftest.py's TamperingProxy -- kept local here since
+    e2e tests don't share fixtures across the tests/adversarial/ directory.
+    """
+
+    async def handler(request: web.Request) -> web.Response:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(upstream_base_url.rstrip("/") + request.path_qs) as resp:
+                body = await resp.read()
+                status = resp.status
+                content_type = resp.content_type
+        if status == 200 and tamper_digest in request.path and body:
+            mutated = bytearray(body)
+            mutated[0] ^= 0xFF
+            body = bytes(mutated)
+        return web.Response(body=body, status=status, content_type=content_type)
+
+    app = web.Application()
+    app.router.add_route("GET", "/{tail:.*}", handler)
+    proxy = TestServer(app)
+    await proxy.start_server()
+    return proxy
+
+
+async def test_fetch_succeeds_with_one_tampering_mirror_among_several(runner, workspace):
+    # T1-shaped resilience through the real CLI: two configured mirrors,
+    # one silently corrupting a chunk. `fetch` must still succeed by
+    # retrying the honest mirror, unlike single-peer M1 which would have
+    # failed the whole fetch.
+    fingerprint = await _publish_fixture_artifact(runner, workspace)
+    origin = workspace["origin"]
+    src = workspace["src"]
+
+    from tessera import cas as cas_mod, originstore
+
+    current = originstore.read_current_pointer(origin, fingerprint, "bert-tiny", "1.2.0")
+    envelope = originstore.read_manifest_envelope(origin, current["digest"])
+    manifest = json.loads(base64.b64decode(envelope["payload"]))
+    chunk_digest = manifest["files"][0]["chunks"][0]
+
+    server = TestServer(build_app(origin))
+    await server.start_server()
+    proxy = await _start_tampering_proxy(str(server.make_url("")), chunk_digest)
+    try:
+        honest_url = str(server.make_url(""))
+        tampering_url = str(proxy.make_url(""))
+
+        result = await invoke(
+            runner,
+            ["trust", "add", "acme-lab", fingerprint, "--mirror", tampering_url, "--mirror", honest_url],
+        )
+        assert result.exit_code == 0, result.output
+
+        result = await invoke(runner, ["--json", "fetch", "acme-lab/bert-tiny@1.2.0"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["ok"] is True
+
+        materialized = Path(payload["materialized"])
+        assert (materialized / "big.bin").read_bytes() == (src / "big.bin").read_bytes()
+
+        peers_state = json.loads((workspace["home"] / "peers.json").read_text())
+        assert peers_state["scores"][tampering_url] < 0
+    finally:
+        await server.close()
+        await proxy.close()
+
+
 async def test_publish_fetch_tampered_origin_fails_closed(runner, workspace):
     fingerprint = await _publish_fixture_artifact(runner, workspace)
     origin = workspace["origin"]
@@ -161,8 +258,6 @@ async def test_publish_fetch_tampered_origin_fails_closed(runner, workspace):
     # Find the manifest that `current` points to, then one of its chunks.
     current = originstore.read_current_pointer(origin, fingerprint, "bert-tiny", "1.2.0")
     envelope = originstore.read_manifest_envelope(origin, current["digest"])
-    import base64
-
     manifest = json.loads(base64.b64decode(envelope["payload"]))
     chunk_digest = manifest["files"][0]["chunks"][0]
     obj_path = cas_mod.object_path(origin, chunk_digest)
