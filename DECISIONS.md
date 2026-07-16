@@ -123,3 +123,119 @@ this milestone. New decisions get appended here as the project grows.
   mirror's ingest verification exists only to avoid caching obviously
   corrupt garbage and is never trust-relevant to a downstream consumer,
   who verifies everything itself, from a mirror or an origin, identically.
+
+## M3-specific decisions
+
+- **D24** Revocation is retroactive and fail-closed with no time-based
+  carve-out (security doc section 5.5): a cryptographically valid
+  signature from a key in the accumulated `revoked_keys` set is rejected
+  everywhere -- manifest, timestamp, checkpoint, provenance -- even on a
+  document that would otherwise verify cleanly, and even if the signature
+  predates the revocation. `root.py`'s `revoked` field is cumulative
+  (each new root version copies forward every prior revocation and
+  appends any new one), so a single verified root document's own
+  `revoked` list is always the FULL revocation history up to that
+  version -- no need to re-walk the whole chain to know what's revoked,
+  only to know the chain itself is legitimate.
+- **D25** Revocation propagation is exactly one hop later than the
+  cross-signature that authorized it: `verify_root_link` for hop N->N+1
+  is checked against the `revoked_keys` accumulated BEFORE that hop;
+  N+1's own new revocations are unioned in only after the hop succeeds.
+  Otherwise a root could never revoke the very key it just used to sign
+  its own rotation into existence.
+- **D26** Three explicitly-scoped root verification entry points
+  (`verify_root_genesis`, `verify_root_link`, `verify_root_chain`, plus
+  the pre-M3 `verify_root_doc`), not one function with a mode flag. Which
+  one is safe to call depends entirely on the trust boundary of the input
+  (a fresh, fully-untrusted network response vs. a document already
+  chain-verified once and now only being re-checked against local cache
+  tampering) -- collapsing them into one function with a boolean would
+  make it easy to accidentally call the unsafe one on untrusted input.
+  Doing exactly that in `verify_flow.py`'s network-fallback path was a
+  real, latent T4A gap this milestone's flag day closed: that path
+  previously called `verify_root_doc` (self-consistency only, no check
+  that the served document is really signed by the PINNED fingerprint's
+  own key) directly against a fresh network response, instead of the
+  safe genesis+chain-walk.
+- **D27** The transparency log is stored as one atomic JSON array
+  (`log/leaves.json`) plus a checkpoint (`log/checkpoint.json` +
+  per-tree-size history), lock-protected exactly like `next_seq`, rather
+  than the architecture doc's literal framing of individually
+  content-addressed leaves that mirrors replicate "for free." A single
+  JSON array is simpler and matches D9's "inspectable JSON over
+  cleverness" philosophy; the cost is that `mirror sync` needs one
+  explicit added step (fetch+replicate `checkpoint.json` and
+  `log/leaves.json` via a new `GET .../log/leaves` route, added
+  specifically because no existing route exposed raw leaves) instead of
+  picking the log up automatically the way it walks chunks and
+  manifests. O(n) rewrite per publish is a known, documented scaling
+  limit, not a blocker at CLI scale.
+- **D28** Consistency proofs are the full ordered leaf-hash list up to
+  the new size (O(n)), not RFC 6962's O(log n) SUBPROOF construction.
+  Same security property (any inconsistency between an old and a
+  claimed-newer checkpoint is detected), much simpler and more obviously
+  correct code, and the asymptotic gap isn't meaningful at the leaf
+  counts a single publisher accumulates. Inclusion proofs ARE the real
+  RFC 6962 O(log n) audit path -- that one is cheap and correct to do
+  properly, and every fetch needs it, so the simplification is scoped
+  specifically to the operation (consistency checks) that's rare and
+  small in practice.
+- **D29** Checkpoints are signed with the release key, no new role (D5's
+  three-role model stays fixed). A provenance attestation's `subject`
+  binds to `manifest.content_digest()` -- the manifest's canonical bytes
+  with `provenance` forced to `null` -- rather than the manifest's own
+  final digest (with `provenance` populated). Binding to the final digest
+  is circular: the manifest's digest depends on what's inside it,
+  including the provenance pointer, which itself depends on the subject
+  digest it's being computed for. Binding to the pre-provenance content
+  digest breaks the cycle while still tying the attestation to the exact
+  file/chunk content being attested to.
+- **D30** `publish`'s `--base`/`--dataset`/`--code` provenance flags
+  resolve materials ONLY from the local trust cache
+  (`trust_store.load_cached_manifest`), never the network -- continuing
+  D22's role-separation principle that a publish host shouldn't need live
+  network access to sign a release. An uncached reference is a clean
+  usage error naming `tessera fetch` as the remedy, not a silent network
+  fetch mid-publish.
+- **D31** `record_index` is keyed per-file (`{relative_path:
+  [record_digest, ...]}`) at the manifest's top level, built only for
+  `.jsonl` files when `--records` is non-`none` and the artifact type is
+  `dataset` -- other extensions stay opaque even with `--records` set,
+  since v1 only knows how to delimit JSONL. `tessera diff` reports
+  per-file status (`added`/`removed`/positional diff) rather than
+  refusing when the two versions' file sets don't match exactly.
+- **D32** `tessera status`'s materialized-but-revoked marking is a pure
+  reconciliation, never a re-verification or a deletion: `fetch_flow`
+  writes a `.tessera-status.json` breadcrumb (manifest digest + signer
+  key id) into each materialized artifact directory at fetch time;
+  `status` cross-references breadcrumbs against a FRESHLY fetched
+  current root's revoked-key set (never a cached one, since the whole
+  point is to catch a revocation the consumer hasn't fetched anything
+  new since) and reports, but never touches, the artifact on disk --
+  matching the security doc's framing that refusing a flagged artifact
+  is a caller policy decision, not something this layer enforces.
+- **D33** `tessera provenance`'s lineage walk defaults to metadata-only
+  (root, manifest, and attestation verified; no chunk bytes pulled)
+  unless `--deep` is given, which pulls each unmaterialized node via the
+  real `fetch` pipeline. A `max_depth` (default 5) plus a visited-ref set
+  guard against cyclic materials graphs -- a valid signature on a
+  `materials` entry proves who asserted the edge, not that the graph it
+  describes is acyclic. A node that fails to resolve is a leaf carrying
+  an `error`, not a reason to abort the whole walk: lineage is a report
+  for a human, not a pass/fail gate.
+- **D34** `publish --resign-all` also re-signs the CURRENT transparency-
+  log checkpoint (same tree_size/root_hash, fresh signature only) with
+  the new release key, not just the manifests. This was a real gap found
+  during end-to-end testing: without it, if the stored checkpoint
+  happened to be signed by the very release key being revoked, V7 (log
+  freshness) would stay broken for every consumer until some unrelated
+  future publish/rotate/revoke happened to refresh the checkpoint --
+  defeating `--resign-all`'s entire purpose as the recovery path after a
+  release-key compromise.
+- **D35** `publisher delegate` resolves the publisher's permanent
+  identity via the stored `publisher/` directory layout and bumps
+  whatever the current root version is, rather than assuming (as the
+  pre-M3 implementation did) that the CURRENT root key's own id is the
+  same value as the publisher's permanent fingerprint. That assumption
+  only holds before any rotation has ever happened; found and fixed
+  during end-to-end testing of a delegate-after-rotate ceremony.

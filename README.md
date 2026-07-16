@@ -6,15 +6,19 @@ consumer verifies locally that what it received is exactly what the
 publisher signed. A mirror can withhold content but is structurally unable
 to poison it; there is no unverified fetch path, anywhere.
 
-This repository currently implements **Milestones 1 and 2**: content-
+This repository currently implements **Milestones 1 through 3**: content-
 addressed storage, chunking, the signed manifest, DSSE/JCS sign-and-verify,
 an origin HTTP server, materialize/quarantine, the core exit-code table
-(M1) -- plus the timestamp+snapshot freshness layer, consumer-persisted
-rollback high-water marks, a multi-peer fetch scheduler with persistent
-peer scoring/blacklisting, and mirror sync/serve (M2). The transparency
-log, provenance attestations, dataset diff, and key rotation/revocation
-are out of scope until M3-M4 -- see `DECISIONS.md` for what's deliberately
-deferred and why.
+(M1); the timestamp+snapshot freshness layer, consumer-persisted rollback
+high-water marks, a multi-peer fetch scheduler with persistent peer
+scoring/blacklisting, and mirror sync/serve (M2); and root key rotation
+with TUF-style cross-signing, fail-closed retroactive key revocation, a
+transparency log with inclusion/consistency proofs and cross-source
+equivocation detection, provenance attestations with a lineage walk, and
+dataset record-index diffing (M3). The full V1-V10 verification pipeline
+runs on every `fetch`. Eclipse/Sybil hardening and a standalone mirror
+daemon are out of scope until M4 -- see `DECISIONS.md` for what's
+deliberately deferred and why.
 
 ## Install (development)
 
@@ -29,12 +33,15 @@ python3 -m venv .venv
 .venv/bin/pytest
 ```
 
-This runs the unit suite; the T1, T2A, T4A adversarial tests (in-process
-tampering mirror / lookalike-key / stale-mirror fixtures); the
-PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE, and PBT-HISTORY-MONOTONE property
-tests; and end-to-end scripted scenarios driven through the real `tessera`
-CLI, including a multi-mirror resilience run and a mirror sync/serve round
-trip.
+This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B adversarial
+tests (in-process tampering mirror / lookalike-key / stale-mirror / root-
+rotation / key-revocation / split-view fixtures, all built from real
+Tessera code, not mocks); the PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE,
+PBT-HISTORY-MONOTONE, and transparency-log Merkle-proof property tests;
+and end-to-end scripted scenarios driven through the real `tessera` CLI,
+including a multi-mirror resilience run, a mirror sync/serve round trip,
+and a full M3 ceremony walkthrough (provenance-carrying publish, dataset
+record diff, rotate, revoke, `--resign-all` recovery, and `status`).
 
 ## Quickstart
 
@@ -73,13 +80,65 @@ tessera trust add acme-lab <fingerprint printed by publisher init> \
 tessera fetch acme-lab/bert-tiny@1.2.0
 ```
 
-Running a mirror requires no keys or accounts:
+Running a mirror requires no keys or accounts. `mirror sync` replicates
+every root version and the transparency log alongside chunks/manifests:
 
 ```
 tessera mirror sync <fingerprint> --from http://127.0.0.1:7433 --store ./mirror-store
 tessera mirror serve --store ./mirror-store --bind 0.0.0.0:7433
 ```
 
-Every command accepts `--json` for a machine-readable `result/v1` object;
-human output is a rendering of the same object. See `04_FRONTEND_SPEC.md`
-for the full command surface and exit-code table.
+Publish with provenance (materials resolved from the local trust cache --
+`fetch` them first) and a dataset record index:
+
+```
+tessera publish ./finetuned-model --name bert-finetuned --version 1.0.0 --type model \
+    --base acme-lab/base-model@1.0.0 --dataset acme-lab/my-dataset@1.0.0 \
+    --code git+https://example.com/train@abc123 \
+    --release-key release.key --store ./origin-store
+
+tessera publish ./my-dataset-dir --name my-dataset --version 2.0.0 --type dataset \
+    --records line --release-key release.key --store ./origin-store
+```
+
+Inspect lineage, diff two dataset versions, and check the transparency log:
+
+```
+tessera provenance acme-lab/bert-finetuned@1.0.0
+tessera diff acme-lab/my-dataset@1.0.0 acme-lab/my-dataset@2.0.0
+tessera log show acme-lab
+```
+
+Rotate the root key (run wherever the current AND new root private keys
+are both available -- D5 keeps root keys offline) and apply it on the
+publish host:
+
+```
+tessera keygen --role root --out root2.key
+tessera rotate --store ./origin-store --root-key root.key --new-root-key root2.key --out rotated.json
+tessera publisher import-root rotated.json --store ./origin-store --release-key release.key
+```
+
+Revoke a compromised key (D13: fail closed, retroactive) and recover:
+
+```
+tessera revoke <release-key-fingerprint> --reason compromised \
+    --store ./origin-store --root-key root2.key --out revoked.json
+tessera publisher import-root revoked.json --store ./origin-store --release-key release.key
+
+tessera keygen --role release --out release2.key
+tessera publisher delegate --role release --key release2.key.pub --root-key root2.key --store ./origin-store
+tessera publish --resign-all --release-key release2.key --store ./origin-store
+```
+
+Check for materialized artifacts whose signer has since been revoked:
+
+```
+tessera status acme-lab
+```
+
+Every command accepts `--json` for a machine-readable object (`result/v1`
+for `fetch`/`verify`; `lineage/v1`, `diff/v1`, `status/v1`, `log/v1` for
+the M3 report commands); human output is a rendering of the same object.
+See `04_FRONTEND_SPEC.md` for the full command surface and exit-code
+table.
