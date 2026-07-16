@@ -62,3 +62,15 @@ def test_empty_artifacts_round_trips():
     doc, canonical_bytes, digest = build_and_digest_snapshot(publisher="b3:" + "0" * 64, artifacts={})
     verified = verify_snapshot(canonical_bytes, expected_digest=digest)
     assert verified["artifacts"] == {}
+
+
+def test_rejects_valid_json_that_is_not_an_object_without_crashing():
+    # M4: found by parser fuzzing -- bytes that are valid, canonical JSON
+    # but not a JSON object (e.g. a bare integer) must fail closed with
+    # DigestMismatchError, not crash with AttributeError from an
+    # unconditional `.get()` call in the error-message construction.
+    from tessera.hashing import b3_hex
+
+    data = b"0"  # canonicalizes to itself; parses to the int 0, not a dict
+    with pytest.raises(DigestMismatchError):
+        verify_snapshot(data, expected_digest=b3_hex(data))

@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import cas, dsse
 from . import records as records_mod
-from .canonical import canonicalize
+from .canonical import canonicalize, is_canonical
 from .chunking import CHUNK_SIZE, iter_chunks, compute_file_digest
 from .errors import DigestMismatchError, InternalError, RollbackError, SignatureError
 from .hashing import b3_hex
@@ -161,7 +161,7 @@ def verify_manifest_envelope(
     if not isinstance(parsed, dict):
         raise SignatureError("manifest payload is not a JSON object")
 
-    if canonicalize(parsed) != payload:
+    if not is_canonical(parsed, payload):
         # The signature is valid over these exact bytes, but the bytes are
         # not the canonical encoding of their own parsed content -- reject
         # rather than let a non-canonical signed payload compute a different

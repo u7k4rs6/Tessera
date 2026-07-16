@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 
 from . import dsse
-from .canonical import canonicalize
+from .canonical import canonicalize, is_canonical
 from .errors import LogFailureError, SignatureError
 from .hashing import b3_hex, is_valid_digest, parse_b3
 
@@ -193,7 +193,7 @@ def verify_checkpoint_envelope(
     if not isinstance(parsed, dict):
         raise SignatureError("checkpoint payload is not a JSON object")
 
-    if canonicalize(parsed) != payload:
+    if not is_canonical(parsed, payload):
         raise SignatureError("checkpoint payload is not canonical JSON")
     if parsed.get("tessera") != CHECKPOINT_TYPE:
         raise SignatureError(f"unexpected document type: {parsed.get('tessera')!r}")

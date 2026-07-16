@@ -161,3 +161,21 @@ def test_verify_threshold_duplicate_signatures_from_same_key_do_not_double_count
 
     with pytest.raises(SignatureError):
         verify_threshold(envelope, {kid: pub}, 2)
+
+
+def test_verify_rejects_unhashable_keyid_without_crashing():
+    # M4: found by parser fuzzing at a deeper example budget -- a
+    # signature entry's `keyid` is attacker-controlled and can be any
+    # JSON value, including an unhashable one (a list, a dict), which
+    # would otherwise crash the `keyid not in authorized_keys` lookup
+    # itself with a bare TypeError instead of failing closed.
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    envelope = {
+        "payloadType": PAYLOAD_TYPE,
+        "payload": sign(b"payload", sk, kid)["payload"],
+        "signatures": [{"keyid": ["not", "hashable"], "sig": "AAAA"}],
+    }
+    with pytest.raises(SignatureError):
+        verify(envelope, {kid: pub})

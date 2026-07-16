@@ -123,7 +123,12 @@ def verify_threshold(
             continue
         keyid = entry.get("keyid")
         sig_b64 = entry.get("sig")
-        if keyid not in authorized_keys or not isinstance(sig_b64, str):
+        # `keyid` must be a hashable str to even ask "is this in
+        # authorized_keys" -- an attacker-controlled envelope can set it
+        # to any JSON value, including an unhashable one (a list, a
+        # dict), which would otherwise crash the `in` check itself
+        # (found by M4's parser fuzzing at a deeper example budget).
+        if not isinstance(keyid, str) or keyid not in authorized_keys or not isinstance(sig_b64, str):
             continue
         try:
             signature = base64.b64decode(sig_b64, validate=True)

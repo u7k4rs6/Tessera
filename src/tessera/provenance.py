@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 
 from . import dsse
-from .canonical import canonicalize
+from .canonical import canonicalize, is_canonical
 from .errors import ProvenanceInvalidError
 from .hashing import b3_hex
 from .timeutil import utc_now_iso
@@ -77,7 +77,7 @@ def verify_provenance_envelope(
     if not isinstance(parsed, dict):
         raise ProvenanceInvalidError("provenance payload is not a JSON object")
 
-    if canonicalize(parsed) != payload:
+    if not is_canonical(parsed, payload):
         raise ProvenanceInvalidError("provenance payload is not canonical JSON")
 
     digest = b3_hex(payload)

@@ -1,4 +1,6 @@
-from tessera.canonical import canonicalize
+import pytest
+
+from tessera.canonical import canonicalize, is_canonical
 
 
 def test_key_ordering_is_deterministic():
@@ -24,3 +26,24 @@ def test_no_insignificant_whitespace():
     out = canonicalize({"a": 1, "b": [1, 2, 3]})
     assert b" " not in out
     assert b"\n" not in out
+
+
+def test_is_canonical_true_for_matching_bytes():
+    obj = {"a": 1, "b": 2}
+    assert is_canonical(obj, canonicalize(obj)) is True
+
+
+def test_is_canonical_false_for_mismatched_bytes():
+    assert is_canonical({"a": 1}, b'{"a": 1}') is False  # has a space; not canonical
+
+
+def test_is_canonical_false_not_raises_for_integer_outside_jcs_safe_domain():
+    # M4: rfc8785 raises its own ValueError subclass (IntegerDomainError)
+    # for integers outside JCS's safe range rather than ever considering
+    # them canonical -- found by parser fuzzing escaping as an unhandled
+    # exception past every verify_*_envelope caller's existing
+    # except-ValueError block, none of which wrapped canonicalize() itself.
+    huge = 2**60
+    with pytest.raises(ValueError):
+        canonicalize(huge)
+    assert is_canonical(huge, b"anything") is False

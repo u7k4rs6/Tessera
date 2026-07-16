@@ -45,7 +45,7 @@ from datetime import timedelta
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import dsse
-from .canonical import canonicalize
+from .canonical import canonicalize, is_canonical
 from .errors import PinMismatchError, RollbackError, SignatureError
 from .hashing import b3_hex
 from .timeutil import format_iso8601, is_expired, utc_now
@@ -106,7 +106,7 @@ def _decode_envelope_payload(envelope: dict) -> dict:
 
 
 def _finish_verified(parsed: dict, payload: bytes) -> dict:
-    if canonicalize(parsed) != payload:
+    if not is_canonical(parsed, payload):
         raise SignatureError("root document payload is not canonical JSON")
     _check_not_expired(parsed)
     return parsed

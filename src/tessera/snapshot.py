@@ -51,7 +51,9 @@ def verify_snapshot(data: bytes, *, expected_digest: str) -> dict:
         parsed = json.loads(data)
         if canonicalize(parsed) != data:
             raise ValueError("snapshot bytes are not the canonical encoding of their own content")
-        if not isinstance(parsed, dict) or parsed.get("tessera") != SNAPSHOT_TYPE:
+        if not isinstance(parsed, dict):
+            raise ValueError(f"snapshot document is not a JSON object: {type(parsed).__name__}")
+        if parsed.get("tessera") != SNAPSHOT_TYPE:
             raise ValueError(f"unexpected snapshot document type: {parsed.get('tessera')!r}")
     except (ValueError, UnicodeDecodeError) as e:
         raise DigestMismatchError(

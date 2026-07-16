@@ -22,7 +22,7 @@ from datetime import timedelta
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import dsse
-from .canonical import canonicalize
+from .canonical import canonicalize, is_canonical
 from .errors import SignatureError, StaleError
 from .timeutil import format_iso8601, is_expired, is_issued_too_far_in_future, parse_iso8601, utc_now_iso
 
@@ -78,7 +78,7 @@ def verify_timestamp_envelope(
     if not isinstance(parsed, dict):
         raise SignatureError("timestamp payload is not a JSON object")
 
-    if canonicalize(parsed) != payload:
+    if not is_canonical(parsed, payload):
         raise SignatureError("timestamp payload is not canonical JSON")
 
     if parsed.get("tessera") != TIMESTAMP_TYPE:
