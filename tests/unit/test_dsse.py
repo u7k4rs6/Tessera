@@ -1,8 +1,8 @@
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tessera.dsse import PAYLOAD_TYPE, pae, sign, verify
-from tessera.errors import SignatureError
+from tessera.dsse import PAYLOAD_TYPE, add_signature, pae, sign, verify, verify_threshold
+from tessera.errors import KeyRevokedError, SignatureError
 from tessera.keys import key_id, public_bytes
 
 
@@ -79,3 +79,85 @@ def test_verify_rejects_malformed_envelope():
         verify({"payloadType": "t", "payload": "not-base64!!", "signatures": [{"keyid": "x", "sig": "eA=="}]}, {"x": b"\x00" * 32})
     with pytest.raises(SignatureError):
         verify({"payloadType": "t", "payload": "aGk=", "signatures": []}, {})
+
+
+def test_verify_raises_key_revoked_when_only_valid_signer_is_revoked():
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    envelope = sign(b"payload", sk, kid)
+
+    with pytest.raises(KeyRevokedError):
+        verify(envelope, {kid: pub}, revoked_keys=frozenset({kid}))
+
+
+def test_verify_succeeds_when_revoked_key_is_not_the_signer():
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    envelope = sign(b"payload", sk, kid)
+
+    other_kid = "b3:" + "f" * 64
+    assert verify(envelope, {kid: pub}, revoked_keys=frozenset({other_kid})) == b"payload"
+
+
+def test_verify_threshold_two_of_two_succeeds():
+    sk1 = Ed25519PrivateKey.generate()
+    pub1 = public_bytes(sk1.public_key())
+    kid1 = key_id(pub1)
+    sk2 = Ed25519PrivateKey.generate()
+    pub2 = public_bytes(sk2.public_key())
+    kid2 = key_id(pub2)
+
+    envelope = sign(b"root doc bytes", sk1, kid1)
+    envelope = add_signature(envelope, sk2, kid2)
+
+    payload = verify_threshold(envelope, {kid1: pub1, kid2: pub2}, 2)
+    assert payload == b"root doc bytes"
+
+
+def test_verify_threshold_one_of_two_signatures_present_fails():
+    sk1 = Ed25519PrivateKey.generate()
+    pub1 = public_bytes(sk1.public_key())
+    kid1 = key_id(pub1)
+    sk2 = Ed25519PrivateKey.generate()
+    pub2 = public_bytes(sk2.public_key())
+    kid2 = key_id(pub2)
+
+    envelope = sign(b"root doc bytes", sk1, kid1)  # only signed by sk1
+
+    with pytest.raises(SignatureError):
+        verify_threshold(envelope, {kid1: pub1, kid2: pub2}, 2)
+
+
+def test_verify_threshold_ignores_revoked_signer_when_counting():
+    sk1 = Ed25519PrivateKey.generate()
+    pub1 = public_bytes(sk1.public_key())
+    kid1 = key_id(pub1)
+    sk2 = Ed25519PrivateKey.generate()
+    pub2 = public_bytes(sk2.public_key())
+    kid2 = key_id(pub2)
+
+    envelope = sign(b"root doc bytes", sk1, kid1)
+    envelope = add_signature(envelope, sk2, kid2)
+
+    # kid1 is revoked -- even though both signatures are cryptographically
+    # valid, only kid2 counts toward the threshold.
+    with pytest.raises(KeyRevokedError):
+        verify_threshold(envelope, {kid1: pub1, kid2: pub2}, 2, revoked_keys=frozenset({kid1}))
+
+    # A lower threshold that the single remaining non-revoked signer satisfies still succeeds.
+    payload = verify_threshold(envelope, {kid1: pub1, kid2: pub2}, 1, revoked_keys=frozenset({kid1}))
+    assert payload == b"root doc bytes"
+
+
+def test_verify_threshold_duplicate_signatures_from_same_key_do_not_double_count():
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+
+    envelope = sign(b"payload", sk, kid)
+    envelope = add_signature(envelope, sk, kid)  # same key signs twice
+
+    with pytest.raises(SignatureError):
+        verify_threshold(envelope, {kid: pub}, 2)

@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from .errors import SignatureError
+from .errors import KeyRevokedError, SignatureError
 
 PAYLOAD_TYPE = "application/vnd.tessera.v1+json"
 
@@ -64,10 +64,38 @@ def add_signature(envelope: dict, private_key: Ed25519PrivateKey, key_id: str) -
     return envelope
 
 
-def verify(envelope: dict, authorized_keys: dict[str, bytes]) -> bytes:
+def verify(envelope: dict, authorized_keys: dict[str, bytes], *, revoked_keys: frozenset[str] = frozenset()) -> bytes:
     """Verify `envelope` has at least one valid signature from a key in
     `authorized_keys` (keyid -> raw 32-byte Ed25519 public key). Returns the
-    decoded payload bytes on success; raises SignatureError otherwise.
+    decoded payload bytes on success; raises SignatureError otherwise, or
+    KeyRevokedError if the only cryptographically valid signature found was
+    from a key in `revoked_keys` (D13: fail closed, no time-based carve-out).
+    A thin wrapper over `verify_threshold` with threshold=1.
+    """
+    return verify_threshold(envelope, authorized_keys, 1, revoked_keys=revoked_keys)
+
+
+def verify_threshold(
+    envelope: dict,
+    authorized_keys: dict[str, bytes],
+    threshold: int,
+    *,
+    revoked_keys: frozenset[str] = frozenset(),
+) -> bytes:
+    """Verify `envelope` carries valid signatures from at least `threshold`
+    DISTINCT, non-revoked keys in `authorized_keys`. A signature from a
+    revoked key is cryptographically checked (so a genuinely valid one is
+    distinguishable from a forged/garbage one) but never counted toward the
+    threshold -- per D13, a revoked key's signature is invalid everywhere,
+    including on documents that would otherwise have enough other valid
+    signers. Returns the decoded payload bytes on success.
+
+    Fail: SignatureError if fewer than `threshold` valid non-revoked
+    signatures are present and none of the attempted signers were revoked;
+    KeyRevokedError if the shortfall is explained by at least one
+    otherwise-valid signature coming from a revoked key (gives the precise
+    "signature by revoked key" attribution the security doc's failure UX
+    requires, rather than a generic "not enough signatures").
     """
     if not isinstance(envelope, dict):
         raise SignatureError("malformed DSSE envelope: not an object")
@@ -87,6 +115,9 @@ def verify(envelope: dict, authorized_keys: dict[str, bytes]) -> bytes:
 
     message = pae(payload_type, payload)
 
+    valid_signers: set[str] = set()
+    revoked_signer_seen = False
+
     for entry in signatures:
         if not isinstance(entry, dict):
             continue
@@ -98,8 +129,20 @@ def verify(envelope: dict, authorized_keys: dict[str, bytes]) -> bytes:
             signature = base64.b64decode(sig_b64, validate=True)
             public_key = Ed25519PublicKey.from_public_bytes(authorized_keys[keyid])
             public_key.verify(signature, message)
-            return payload
         except (InvalidSignature, ValueError):
             continue
 
-    raise SignatureError("no valid signature from an authorized key")
+        if keyid in revoked_keys:
+            revoked_signer_seen = True
+            continue
+        valid_signers.add(keyid)
+
+    if len(valid_signers) >= threshold:
+        return payload
+
+    if revoked_signer_seen:
+        raise KeyRevokedError(
+            f"only {len(valid_signers)} of required {threshold} valid non-revoked signatures present; "
+            "at least one otherwise-valid signature was from a revoked key"
+        )
+    raise SignatureError(f"only {len(valid_signers)} of required {threshold} valid signatures present")

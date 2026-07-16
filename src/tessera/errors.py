@@ -1,9 +1,10 @@
 """Exit codes and error hierarchy, per 03_SECURITY_AND_ACCESS.md section 7.
 
 The full table was defined from M1 even though M1 only ever emitted a
-subset of these codes (0, 2, 20, 21, 40, 41, 43, 70). M2 now emits 30
-(stale timestamp), 31 (rollback), and 44 (timestamp equivocation). The
-transparency log itself, and codes 42/45, remain M3.
+subset of these codes (0, 2, 20, 21, 40, 41, 43, 70). M2 added 30 (stale
+timestamp), 31 (rollback), and 44 (timestamp equivocation). M3 adds 42
+(key revocation) and 45 (provenance) and extends 44's use to the
+transparency log's inclusion/consistency/checkpoint-equivocation failures.
 """
 
 from __future__ import annotations
@@ -68,12 +69,20 @@ class SignatureError(TesseraError):
     exit_code = ExitCode.SIGNATURE_INVALID
 
 
+class KeyRevokedError(TesseraError):
+    exit_code = ExitCode.KEY_REVOKED
+
+
 class PinMismatchError(TesseraError):
     exit_code = ExitCode.PIN_MISMATCH
 
 
 class LogFailureError(TesseraError):
     exit_code = ExitCode.LOG_FAILURE
+
+
+class ProvenanceInvalidError(TesseraError):
+    exit_code = ExitCode.PROVENANCE_INVALID
 
 
 class InternalError(TesseraError):
