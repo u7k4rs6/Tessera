@@ -8,6 +8,7 @@ from tessera.dsse import add_signature
 from tessera.errors import LogFailureError, NetworkError, RollbackError, StaleError
 from tessera.freshness import (
     cross_check_checkpoints,
+    cross_check_timestamps,
     fetch_verified_checkpoint,
     fetch_verified_inclusion,
     fetch_verified_root_chain,
@@ -281,6 +282,86 @@ async def test_cross_check_checkpoints_accepts_consistent_larger_tree():
                     primary_envelope, authorized_keys=authorized, publisher=FP
                 )
                 await cross_check_checkpoints(pool, FP, primary_checkpoint, authorized_keys=authorized)  # must not raise
+        finally:
+            await server_a.close()
+            await server_b.close()
+
+
+async def test_cross_check_timestamps_detects_equivocation():
+    # Two independent in-process origins, both signing a DIFFERENT
+    # statement at the SAME seq for the same publisher -- the timestamp
+    # analogue of T5B, per 02_TECHNICAL_ARCHITECTURE.md section 6.2.
+    import tempfile
+    from pathlib import Path as P
+
+    from tessera.timestamp import verify_timestamp_envelope
+
+    sk, kid = _release_key()
+    authorized = {kid: public_bytes(sk.public_key())}
+
+    with tempfile.TemporaryDirectory() as tmp_a, tempfile.TemporaryDirectory() as tmp_b:
+        store_a, store_b = P(tmp_a), P(tmp_b)
+        store_mod.ensure_layout(store_a)
+        store_mod.ensure_layout(store_b)
+
+        _publish_timestamp(store_a, FP, sk, kid, seq=1)
+        # store_b's snapshot has a different (empty vs. non-empty is not
+        # distinguishable here, so vary via a differently-keyed artifact
+        # dict) content at the SAME seq -- two honestly-impossible, only
+        # equivocation-possible, statements.
+        _doc, canonical, digest = build_and_digest_snapshot(publisher=FP, artifacts={"x": {}})
+        originstore.write_snapshot(store_b, FP, digest, canonical)
+        stmt_b = build_timestamp_statement(publisher=FP, seq=1, snapshot_digest=digest)
+        originstore.write_timestamp(store_b, FP, sign_timestamp(stmt_b, sk, kid))
+
+        server_a = TestServer(build_app(store_a))
+        server_b = TestServer(build_app(store_b))
+        await server_a.start_server()
+        await server_b.start_server()
+        try:
+            home = P(tmp_a) / "consumer-home"
+            store_mod.ensure_layout(home)
+            async with PeerPool(home, [str(server_a.make_url("")), str(server_b.make_url(""))]) as pool:
+                primary_client = pool.clients_by_score()[0]
+                primary_envelope = await primary_client.get_timestamp(FP)
+                primary_statement = verify_timestamp_envelope(primary_envelope, authorized_keys=authorized, publisher=FP)
+                with pytest.raises(LogFailureError):
+                    await cross_check_timestamps(pool, FP, primary_statement, authorized_keys=authorized)
+        finally:
+            await server_a.close()
+            await server_b.close()
+
+
+async def test_cross_check_timestamps_accepts_a_peer_that_is_simply_ahead():
+    import tempfile
+    from pathlib import Path as P
+
+    from tessera.timestamp import verify_timestamp_envelope
+
+    sk, kid = _release_key()
+    authorized = {kid: public_bytes(sk.public_key())}
+
+    with tempfile.TemporaryDirectory() as tmp_a, tempfile.TemporaryDirectory() as tmp_b:
+        store_a, store_b = P(tmp_a), P(tmp_b)
+        store_mod.ensure_layout(store_a)
+        store_mod.ensure_layout(store_b)
+
+        _publish_timestamp(store_a, FP, sk, kid, seq=1)
+        _publish_timestamp(store_b, FP, sk, kid, seq=1)
+        _publish_timestamp(store_b, FP, sk, kid, seq=2)  # store_b is honestly ahead
+
+        server_a = TestServer(build_app(store_a))
+        server_b = TestServer(build_app(store_b))
+        await server_a.start_server()
+        await server_b.start_server()
+        try:
+            home = P(tmp_a) / "consumer-home"
+            store_mod.ensure_layout(home)
+            async with PeerPool(home, [str(server_a.make_url("")), str(server_b.make_url(""))]) as pool:
+                client_a = pool.client_for(str(server_a.make_url("")))
+                primary_envelope = await client_a.get_timestamp(FP)
+                primary_statement = verify_timestamp_envelope(primary_envelope, authorized_keys=authorized, publisher=FP)
+                await cross_check_timestamps(pool, FP, primary_statement, authorized_keys=authorized)  # must not raise
         finally:
             await server_a.close()
             await server_b.close()

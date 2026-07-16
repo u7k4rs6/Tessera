@@ -231,6 +231,9 @@ async def fetch(home: Path, pool: PeerPool, ref: str) -> dict:
             )
 
         timestamp_stmt = await _try_each_peer(pool, _get_timestamp)
+        await freshness.cross_check_timestamps(
+            pool, fingerprint, timestamp_stmt, authorized_keys=authorized_timestamp, revoked_keys=revoked_keys
+        )
     except TesseraError as e:
         check_fail(checks, "V4", e)
         return build_result("fetch", ref, False, e.exit_code, checks)

@@ -26,6 +26,19 @@ different victims different "latest" states at the same moment (T5B),
 which the single-source-over-time check alone cannot.
 `fetch_verified_inclusion` verifies the specific manifest being fetched is
 really a leaf in the checkpointed tree.
+
+`cross_check_timestamps` (M4) is V4's multi-source half, the timestamp
+analogue of `cross_check_checkpoints`: 02_TECHNICAL_ARCHITECTURE.md
+section 6.2 states timestamps are "fetched from at least two independent
+sources when two or more are configured... two valid statements with the
+same seq but different contents [is] equivocation evidence." Root gets no
+such cross-source check: `verify_root_chain`'s TUF-style cross-signing,
+anchored at the pinned genesis key, already makes two divergent-but-both-
+valid root histories require actual root key compromise -- an event
+03_SECURITY_AND_ACCESS.md section 5.6 documents as unrecoverable by any
+automatic mechanism, so a same-session cross-source root check would be
+new code defending against a scenario the threat model already says code
+cannot fix.
 """
 
 from __future__ import annotations
@@ -217,3 +230,45 @@ async def cross_check_checkpoints(
                 primary_size, primary_root, other_size, other_root, proof_response["proof"]
             )
         # other_size < primary_size: that peer is just behind; nothing to check.
+
+
+async def cross_check_timestamps(
+    pool: PeerPool,
+    fingerprint: str,
+    primary_statement: dict,
+    *,
+    authorized_keys: dict[str, bytes],
+    revoked_keys: frozenset[str] = frozenset(),
+) -> None:
+    """V4, multi-source half (M4, per 02_TECHNICAL_ARCHITECTURE.md section
+    6.2): compare the primary timestamp statement against every OTHER
+    configured peer's timestamp, sequentially. Same seq with a DIFFERENT
+    statement is equivocation across sources (caught here, not by
+    `fetch_verified_timestamp`, since that only compares a single source
+    against itself over time via the consumer's persisted hwm). A
+    different seq either direction is not flagged -- an older seq is just
+    an availability fact (that peer is behind), and a newer seq is simply
+    ahead, which `_try_each_peer`'s normal score-ordered fallback already
+    handles. A peer that fails to answer or whose statement doesn't verify
+    is simply skipped (deprioritizing/blacklisting that peer is
+    `fetch_flow.py`'s job via the normal V1-V6 checks against it, not this
+    function's).
+    """
+    primary_seq = primary_statement["seq"]
+
+    for client in pool.clients_by_score():
+        try:
+            other_envelope = await client.get_timestamp(fingerprint)
+            if other_envelope is None:
+                continue
+            other_statement = verify_timestamp_envelope(
+                other_envelope, authorized_keys=authorized_keys, publisher=fingerprint, revoked_keys=revoked_keys
+            )
+        except TesseraError:
+            continue
+
+        if other_statement["seq"] == primary_seq and other_statement != primary_statement:
+            raise LogFailureError(
+                f"equivocation: two sources report different timestamp statements at seq {primary_seq}",
+                peer=client.base_url,
+            )
