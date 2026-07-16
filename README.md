@@ -6,19 +6,22 @@ consumer verifies locally that what it received is exactly what the
 publisher signed. A mirror can withhold content but is structurally unable
 to poison it; there is no unverified fetch path, anywhere.
 
-This repository currently implements **Milestones 1 through 3**: content-
+This repository implements **all four milestones (M1-M4)**: content-
 addressed storage, chunking, the signed manifest, DSSE/JCS sign-and-verify,
 an origin HTTP server, materialize/quarantine, the core exit-code table
 (M1); the timestamp+snapshot freshness layer, consumer-persisted rollback
 high-water marks, a multi-peer fetch scheduler with persistent peer
-scoring/blacklisting, and mirror sync/serve (M2); and root key rotation
-with TUF-style cross-signing, fail-closed retroactive key revocation, a
+scoring/blacklisting, and mirror sync/serve (M2); root key rotation with
+TUF-style cross-signing, fail-closed retroactive key revocation, a
 transparency log with inclusion/consistency proofs and cross-source
 equivocation detection, provenance attestations with a lineage walk, and
-dataset record-index diffing (M3). The full V1-V10 verification pipeline
-runs on every `fetch`. Eclipse/Sybil hardening and a standalone mirror
-daemon are out of scope until M4 -- see `DECISIONS.md` for what's
-deliberately deferred and why.
+dataset record-index diffing (M3); and eclipse/freeze hardening,
+cross-source timestamp equivocation checking, a combined-attack chaos
+scenario, parser fuzzing, and scripted compromise-playbook drills (M4).
+The full V1-V10 verification pipeline runs on every `fetch`. A standalone
+mirror daemon is the one deliberately-deferred, post-M4 item -- see
+`DECISIONS.md` (D10) for why. `THREAT_COVERAGE.md` maps every threat in
+`03_SECURITY_AND_ACCESS.md`'s table to its proving test.
 
 ## Install (development)
 
@@ -33,15 +36,22 @@ python3 -m venv .venv
 .venv/bin/pytest
 ```
 
-This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B adversarial
-tests (in-process tampering mirror / lookalike-key / stale-mirror / root-
-rotation / key-revocation / split-view fixtures, all built from real
-Tessera code, not mocks); the PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE,
-PBT-HISTORY-MONOTONE, and transparency-log Merkle-proof property tests;
-and end-to-end scripted scenarios driven through the real `tessera` CLI,
-including a multi-mirror resilience run, a mirror sync/serve round trip,
-and a full M3 ceremony walkthrough (provenance-carrying publish, dataset
-record diff, rotate, revoke, `--resign-all` recovery, and `status`).
+This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B, T6A, T6B
+adversarial tests plus the M4 combined chaos scenario (T1+T2b+T6a against
+one fetch) -- in-process tampering mirror / lookalike-key / stale-mirror /
+root-rotation / key-revocation / split-view / eclipse / Sybil-flood
+fixtures, all built from real Tessera code, not mocks; the
+PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE, PBT-HISTORY-MONOTONE, and
+transparency-log Merkle-proof property tests, plus M4's parser fuzzing
+(structurally-arbitrary, not single-byte-mutated, input across every
+envelope/manifest/root/timestamp/checkpoint/provenance/snapshot/proof
+parser -- `--hypothesis-profile=thorough` for a deeper, opt-in 1000-
+example pass); and end-to-end scripted scenarios driven through the real
+`tessera` CLI, including a multi-mirror resilience run, a mirror sync/
+serve round trip, a full M3 ceremony walkthrough (provenance-carrying
+publish, dataset record diff, rotate, revoke, `--resign-all` recovery,
+and `status`), and the M4 timestamp-key/root-key compromise-playbook
+drills.
 
 ## Quickstart
 

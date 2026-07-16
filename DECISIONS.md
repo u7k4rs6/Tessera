@@ -239,3 +239,113 @@ this milestone. New decisions get appended here as the project grows.
   same value as the publisher's permanent fingerprint. That assumption
   only holds before any rotation has ever happened; found and fixed
   during end-to-end testing of a delegate-after-rotate ceremony.
+
+## M4-specific decisions
+
+- **D36** "Equivocation cross-checks" (the milestone-table bullet) means
+  extending M3's `cross_check_checkpoints` pattern to the TIMESTAMP only,
+  not the root document. `02_TECHNICAL_ARCHITECTURE.md` section 6.2
+  states the design's own promise precisely: "Freshness metadata
+  (`timestamp`, `log/checkpoint`) is fetched from at least two
+  independent sources when two or more are configured... two valid
+  statements with the same `seq` but different contents [is]
+  equivocation evidence" -- M3 built this for the log but never for the
+  timestamp itself, a real gap against the architecture doc's own stated
+  design. Root gets no analogous check: TUF-style cross-signing already
+  makes two divergent-but-both-valid root histories require actual root
+  key compromise, which section 5.6 documents as unrecoverable by any
+  automatic mechanism -- a same-session cross-source root check would be
+  new code defending against a scenario the threat model says code
+  cannot fix. `freshness.cross_check_timestamps` mirrors
+  `cross_check_checkpoints`'s exact shape (sequential over
+  `pool.clients_by_score()`, no concurrency, same M2/M3 precedent), wired
+  into `fetch_flow.py`'s V4 block.
+- **D37** Compromise-playbook drills are scripted end-to-end tests of the
+  section 5.6 recovery procedures, not new mechanism. The release-key
+  playbook was already fully drilled by the M3 ceremony test; M4 adds the
+  timestamp-key drill (revoke → rotate → reissue) and the root-key drill
+  (the only code-testable surface of an inherently manual, out-of-band
+  procedure: re-pinning an existing local alias to a brand-new,
+  unrelated fingerprint via `trust add`).
+- **D38** `THREAT_COVERAGE.md` is a hand-maintained markdown table (no
+  new tooling), matching `DECISIONS.md`'s existing convention, populated
+  cumulatively across all four milestones rather than as an M4-only
+  artifact -- section 9's "each checkpoint report" language is cumulative,
+  and a report that only covered the newest milestone's tests would be a
+  worse, less useful document than one line-item lookup covering the
+  whole threat table at once.
+- **D39** The chaos scenario (T1+T2b+T6a combined against one fetch) and
+  T6B-SYBIL-EXHAUST's 16-peer topology both reuse existing adversarial
+  fixture techniques verbatim (`TamperingProxy`, `shutil.copytree`-frozen
+  stale stores, empty/corrupted-chunk-only stores) rather than inventing
+  new fixture machinery. Two real behavioral subtleties, not code bugs,
+  had to be designed around and are documented directly in the test
+  files: (a) `PeerPool` scores persist across fetch calls sharing a home
+  directory, so a prior successful fetch gives a peer a score head start
+  that can starve a later test's other configured peers of ever being
+  exercised at all; (b) a peer whose state honestly matches the
+  consumer's NOT-YET-ADVANCED high-water mark doesn't error at V2/V4/V5
+  (it's an older-but-valid snapshot, not a rollback or equivocation) --
+  if tried before a more-current peer, metadata resolution locks onto its
+  stale state and the whole fetch fails at V6 before an honest peer is
+  ever reached, so peer-list insertion order (ties break by it when
+  scores are tied) has to put the intended-to-win peer first.
+- **D40** Two parser-robustness bugs were found by pre-reading every
+  entry point M4's fuzzing mandate names, before writing the fuzz tests
+  that would otherwise immediately fail on them: (1) `timestamp.py`,
+  `log.py`, `manifest.py`, and `provenance.py` all lacked the
+  `isinstance(parsed, dict)` guard `root.py::_decode_envelope_payload`
+  already had, so a validly-signed payload of e.g. `b'null'` crashed with
+  a raw `AttributeError` on `.get()` instead of raising a `TesseraError`
+  -- reachable by a malicious/compromised key holder (section 5.6, T3b),
+  not just a network attacker. (2) `log.py::verify_inclusion`/
+  `verify_consistency` passed attacker-controlled proof elements straight
+  into `hashing.parse_b3`, which raises a bare `ValueError` rather than a
+  `TesseraError`, letting a malformed proof from a malicious peer crash
+  the whole `fetch` process. Both fixed ahead of the fuzz-test-writing
+  step.
+- **D41** Parser fuzzing itself (run at both the default 100-example
+  budget and an opt-in 1000-example "thorough" `tests/conftest.py`
+  profile, across several random seeds) found three MORE real crash bugs
+  beyond the two in D40 -- the "budgeted, expected work" the milestone's
+  own framing anticipated, not scope creep:
+  1. Every `rfc8785` exception (including `IntegerDomainError`, for
+     integers outside JCS's safe range) is a `ValueError` subclass, but
+     `canonicalize()` was called OUTSIDE every affected module's existing
+     `except ValueError` block (only `json.loads` was wrapped) -- a
+     validly-signed payload containing a too-large integer crashed the
+     whole fetch process. Fixed centrally: `canonical.py` gains
+     `is_canonical(obj, payload) -> bool`, catching `ValueError` and
+     returning `False` rather than raising; every affected call site
+     (manifest.py, timestamp.py, log.py, provenance.py, root.py) uses it
+     instead of a bare `canonicalize(...) != payload` comparison.
+     `snapshot.py` already wrapped its call correctly and needed no
+     change -- the inconsistency between it and the other five modules is
+     exactly why a centralized helper, not five independent try/except
+     blocks, is the right fix: one obviously-correct implementation
+     instead of five chances to get the wrapping subtly wrong again.
+  2. `dsse.py::verify_threshold` crashed with a bare `TypeError`
+     ("unhashable type: 'list'") when a signature entry's attacker-
+     controlled `keyid` field was a JSON list or dict, since `keyid not
+     in authorized_keys` requires a hashable key. Fixed with an explicit
+     `isinstance(keyid, str)` guard before the lookup.
+  3. `snapshot.py`'s "unexpected snapshot document type" error message
+     unconditionally called `parsed.get("tessera")` even when `parsed`
+     wasn't a dict -- the `or`-chain condition it sat inside correctly
+     short-circuited the CHECK, but not the error message construction
+     underneath the `raise`. Fixed by splitting into two sequential
+     `if`/`raise` statements instead of one combined condition.
+- **D42** Re-pinning a local alias to a NEW fingerprint (the root-key-
+  compromise recovery drill, D37) surfaced a real bug: `state.json`
+  (rollback/equivocation high-water marks) and cached root/manifest
+  envelopes are keyed by the LOCAL ALIAS NAME, not by fingerprint, so a
+  re-pin silently carried the OLD identity's high-water marks over and
+  compared them against the NEW, unrelated publisher's own genuinely
+  fresh state -- observed as a false "equivocation" the moment the new
+  publisher's first-ever timestamp happened to land on a seq number the
+  old one had already reached. This would have broken the one documented
+  recovery procedure for root key compromise in practice. Fixed:
+  `trust_store.add_pin` now clears `state.json`, the cached root
+  envelope, and cached manifests whenever a pin's fingerprint actually
+  changes; a same-fingerprint re-pin (e.g. just updating the mirror list)
+  is unaffected.
