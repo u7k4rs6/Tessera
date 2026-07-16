@@ -68,7 +68,10 @@ def published_artifact(tmp_path, origin_store):
     digest = manifest_digest(manifest)
     envelope = sign_manifest(manifest, release_sk, release_kid)
     originstore.write_manifest_envelope(origin_store, digest, envelope)
-    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest)
+    log_index, _checkpoint = originstore.append_log_leaf(
+        origin_store, root_kid, event="publish", digest=digest, release_private_key=release_sk, release_key_id=release_kid
+    )
+    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest, log_index=log_index)
 
     snapshot_digest = _reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
 
@@ -99,7 +102,7 @@ def _reissue_timestamp(origin_store, fingerprint: str, timestamp_sk, timestamp_k
             pointer = originstore.read_current_pointer(origin_store, fingerprint, artifact, version)
             manifest_env = originstore.read_manifest_envelope(origin_store, pointer["digest"])
             seq = decode_envelope_payload(manifest_env)["seq"]
-            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"]}
+            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"], "log_index": pointer.get("log_index")}
             if seq > best_seq:
                 best_seq, best_version = seq, version
         artifacts[artifact] = {"current_version": best_version, "versions": versions}

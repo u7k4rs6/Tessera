@@ -66,7 +66,7 @@ def origin_reissue_timestamp(store: Path, timestamp_key_path: Path, passphrase_f
             envelope = originstore.read_manifest_envelope(store, digest)
             payload = json.loads(base64.b64decode(envelope["payload"], validate=True))
             seq = payload["seq"]
-            versions[version] = {"seq": seq, "manifest_digest": digest}
+            versions[version] = {"seq": seq, "manifest_digest": digest, "log_index": pointer.get("log_index")}
             if seq > best_seq:
                 best_seq, best_version = seq, version
         artifacts[artifact] = {"current_version": best_version, "versions": versions}

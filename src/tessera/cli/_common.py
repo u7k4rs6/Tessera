@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import click
+
+from .. import originstore
 
 
 def find_sole_publisher(store: Path) -> str:
@@ -22,3 +26,21 @@ def find_sole_publisher(store: Path) -> str:
             f"{store}: multiple publishers present ({', '.join(candidates)}); one publisher per store is supported"
         )
     return candidates[0]
+
+
+def latest_root_version(store: Path, fingerprint: str) -> int:
+    root_dir = originstore.publisher_dir(store, fingerprint) / "root"
+    if not root_dir.is_dir():
+        raise click.ClickException(f"{store}: no root document found for {fingerprint}")
+    versions = [int(p.stem) for p in root_dir.iterdir() if p.is_file() and p.suffix == ".json" and p.stem.isdigit()]
+    if not versions:
+        raise click.ClickException(f"{store}: no root document found for {fingerprint}")
+    return max(versions)
+
+
+def decode_envelope_payload(envelope: dict) -> dict:
+    return json.loads(base64.b64decode(envelope["payload"], validate=True))
+
+
+def decode_key_entries(entries: list[dict]) -> list[tuple[str, bytes]]:
+    return [(e["id"], base64.b64decode(e["pub"], validate=True)) for e in entries]

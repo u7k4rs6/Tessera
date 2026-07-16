@@ -11,6 +11,17 @@ verifies everything itself, from a mirror or from the origin, identically
 (PRD section 4, UC8). `mirror serve` reuses `httpserver.build_app`
 verbatim: a mirror serves the exact same routes an origin does, from a
 store `mirror sync` populated instead of one `publish` populated.
+
+Transparency log replication (M3) is an explicit added step here, not
+automatic the way chunks are: `originstore.py`'s log storage is a single
+JSON array + checkpoint (Decision 5 in the M3 plan), not per-leaf
+content-addressed objects the way the architecture doc's text frames it,
+so a mirror can't pick the log up "for free" by walking manifests/chunks
+-- it fetches `log/checkpoint` and every root version explicitly, and
+replicates `log/leaves.json` verbatim so a consumer fetching from this
+mirror can still build inclusion proofs against it (`log/proof/...` is
+served by the SAME route handlers a mirror shares with an origin, reading
+whatever `leaves.json`/`checkpoint.json` sit in its own store).
 """
 
 from __future__ import annotations
@@ -41,26 +52,46 @@ def mirror_group() -> None:
 @click.option("--store", type=click.Path(path_type=Path), required=True, help="Local mirror store directory")
 def mirror_sync(publisher: str, from_url: str, store: Path) -> None:
     """Pull PUBLISHER's (a root-key fingerprint) current state from --from
-    into --store: root document, timestamp, snapshot, every manifest the
-    snapshot names, and every chunk those manifests name.
+    into --store: every root version, timestamp, snapshot, every manifest
+    the snapshot names, every chunk those manifests name, and the
+    transparency log (checkpoint + leaves, M3).
     """
     ensure_layout(store)
     counts = asyncio.run(_sync(publisher, from_url, store))
     click.echo(
-        f"synced: root, timestamp, snapshot, {counts['manifests']} manifest(s), {counts['chunks']} chunk(s)"
+        f"synced: {counts['root_versions']} root version(s), timestamp, snapshot, "
+        f"{counts['manifests']} manifest(s), {counts['chunks']} chunk(s), "
+        f"log ({counts['log_leaves']} leaf/leaves)"
     )
     click.echo("note: mirror verified content on ingest (advisory only; consumers never rely on this)")
 
 
 async def _sync(publisher: str, from_url: str, store: Path) -> dict:
     async with OriginClient(from_url) as client:
-        root_envelope = await client.get_root(publisher, 1)
-        if root_envelope is None:
+        root_version_count = 0
+        version = 1
+        while True:
+            root_envelope = await client.get_root(publisher, version)
+            if root_envelope is None:
+                break
+            if version == 1:
+                root_doc = _decode_payload(root_envelope)
+                if root_doc.get("keys", {}).get("root", [{}])[0].get("id") != publisher:
+                    raise click.ClickException("root document is not self-consistent with the requested fingerprint")
+            originstore.write_root_doc(store, publisher, version, root_envelope)
+            root_version_count += 1
+            version += 1
+        if root_version_count == 0:
             raise click.ClickException(f"{from_url}: no root document for {publisher}")
-        root_doc = _decode_payload(root_envelope)
-        if root_doc.get("keys", {}).get("root", [{}])[0].get("id") != publisher:
-            raise click.ClickException("root document is not self-consistent with the requested fingerprint")
-        originstore.write_root_doc(store, publisher, 1, root_envelope)
+
+        checkpoint_envelope = await client.get_checkpoint(publisher)
+        leaf_count = 0
+        if checkpoint_envelope is not None:
+            originstore.atomic_write_json(originstore.checkpoint_path(store, publisher), checkpoint_envelope)
+            leaves = await client.get_log_leaves(publisher)
+            if leaves is not None:
+                originstore.atomic_write_json(originstore.log_leaves_path(store, publisher), leaves)
+                leaf_count = len(leaves)
 
         timestamp_envelope = await client.get_timestamp(publisher)
         if timestamp_envelope is None:
@@ -101,7 +132,12 @@ async def _sync(publisher: str, from_url: str, store: Path) -> dict:
                         cas.write_verified(store, chunk_digest, data, peer=from_url)
                         chunk_count += 1
 
-    return {"manifests": manifest_count, "chunks": chunk_count}
+    return {
+        "root_versions": root_version_count,
+        "manifests": manifest_count,
+        "chunks": chunk_count,
+        "log_leaves": leaf_count,
+    }
 
 
 def _decode_payload(envelope: dict) -> dict:

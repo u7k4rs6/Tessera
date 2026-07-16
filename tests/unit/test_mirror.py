@@ -83,11 +83,19 @@ def published_artifact(tmp_path, origin_store):
     digest = manifest_digest(manifest)
     envelope = sign_manifest(manifest, release_sk, release_kid)
     originstore.write_manifest_envelope(origin_store, digest, envelope)
-    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest)
+    log_index, _checkpoint = originstore.append_log_leaf(
+        origin_store, root_kid, event="publish", digest=digest, release_private_key=release_sk, release_key_id=release_kid
+    )
+    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest, log_index=log_index)
 
     _doc, canonical, snapshot_digest = build_and_digest_snapshot(
         publisher=root_kid,
-        artifacts={"bert-tiny": {"current_version": "1.2.0", "versions": {"1.2.0": {"seq": 1, "manifest_digest": digest}}}},
+        artifacts={
+            "bert-tiny": {
+                "current_version": "1.2.0",
+                "versions": {"1.2.0": {"seq": 1, "manifest_digest": digest, "log_index": log_index}},
+            }
+        },
     )
     originstore.write_snapshot(origin_store, root_kid, snapshot_digest, canonical)
     stmt = build_timestamp_statement(publisher=root_kid, seq=1, snapshot_digest=snapshot_digest)

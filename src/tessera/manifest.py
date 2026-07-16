@@ -20,6 +20,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import cas, dsse
+from . import records as records_mod
 from .canonical import canonicalize
 from .chunking import CHUNK_SIZE, iter_chunks, compute_file_digest
 from .errors import DigestMismatchError, InternalError, RollbackError, SignatureError
@@ -60,12 +61,19 @@ def build_manifest(
     seq: int,
     artifact_type: str,
     created: str | None = None,
+    records: str = records_mod.GRANULARITY_NONE,
 ) -> dict:
     """Chunk and hash every file under `source_dir`, writing each chunk into
     the CAS at `home`, and assemble the signed-manifest shape (unsigned).
+
+    `records` (dataset-only, per D15/D11) builds a per-file record digest
+    index at the given granularity for every `.jsonl` file; other file
+    extensions are opaque and never contribute to `record_index`, even
+    when `records` is non-'none'.
     """
     file_entries = []
     total_size = 0
+    record_index: dict[str, list[str]] | None = None
     for rel_path in _iter_relative_files(source_dir):
         abs_path = source_dir / rel_path
         chunk_digests: list[str] = []
@@ -86,6 +94,11 @@ def build_manifest(
         )
         total_size += size
 
+        if artifact_type == "dataset" and records != records_mod.GRANULARITY_NONE and abs_path.suffix == ".jsonl":
+            if record_index is None:
+                record_index = {}
+            record_index[rel_path] = records_mod.build_record_index(abs_path, records)
+
     return {
         "tessera": MANIFEST_TYPE,
         "publisher": publisher,
@@ -96,13 +109,24 @@ def build_manifest(
         "created": created or utc_now_iso(),
         "files": file_entries,
         "total_size": total_size,
-        "record_index": None,
+        "record_index": record_index,
         "provenance": None,
     }
 
 
 def manifest_digest(manifest: dict) -> str:
     return b3_hex(canonicalize(manifest))
+
+
+def content_digest(manifest: dict) -> str:
+    """The manifest's digest with `provenance` forced to null -- the stable
+    identity a provenance attestation's `subject.digest` binds to.
+    Independent of which (if any) attestation the manifest's own
+    `provenance` field happens to point at, since that field's value would
+    otherwise be circular with the manifest's own digest (the field can't
+    name a digest computed over a payload that includes the field itself).
+    """
+    return b3_hex(canonicalize({**manifest, "provenance": None}))
 
 
 def sign_manifest(manifest: dict, private_key: Ed25519PrivateKey, key_id: str) -> dict:

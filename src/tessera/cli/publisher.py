@@ -17,7 +17,10 @@ from pathlib import Path
 import click
 
 from .. import keys, originstore, root
+from ..canonical import canonicalize
+from ..hashing import b3_hex
 from ..store import ensure_layout
+from ._common import decode_envelope_payload
 
 
 @click.group("publisher")
@@ -76,3 +79,48 @@ def publisher_delegate(role: str, pub_key_path: Path, root_key_path: Path, store
     originstore.write_root_doc(store, root_loaded.key_id, 1, new_envelope)
 
     click.echo(f"delegated {role} key {delegated_kid}")
+
+
+@publisher_group.command("import-root")
+@click.argument("signed_root_file", type=click.Path(exists=True, path_type=Path))
+@click.option("--store", type=click.Path(path_type=Path), required=True)
+@click.option("--release-key", "release_key_path", type=click.Path(exists=True, path_type=Path), required=True, help="Release key, to sign the log entry for this rotation/revocation")
+@click.option("--passphrase-fd", type=int, default=None)
+def publisher_import_root(signed_root_file: Path, store: Path, release_key_path: Path, passphrase_fd: int | None) -> None:
+    """Apply a prepared, cross-signed root document (from `rotate` or
+    `revoke`) to STORE, after validating it's a legitimate extension of
+    the currently stored root chain.
+    """
+    envelope = json.loads(signed_root_file.read_text())
+    payload = decode_envelope_payload(envelope)
+    fingerprint = payload.get("publisher")
+    new_version = payload.get("root_version")
+    if not fingerprint or not isinstance(new_version, int):
+        raise click.ClickException(f"{signed_root_file}: not a recognized root document")
+
+    ensure_layout(store)
+    prev_envelope = originstore.read_root_doc(store, fingerprint, new_version - 1)
+    if prev_envelope is None:
+        raise click.ClickException(f"{store}: no root document at version {new_version - 1} to rotate from")
+    prev_doc = decode_envelope_payload(prev_envelope)
+
+    verified_next = root.verify_root_link(prev_doc, envelope)
+
+    originstore.write_root_doc(store, fingerprint, new_version, envelope)
+
+    passphrase = keys.read_passphrase(passphrase_fd)
+    release_loaded = keys.load_encrypted_key(release_key_path, passphrase)
+    if release_loaded.role != "release":
+        raise click.ClickException(f"{release_key_path} is a {release_loaded.role} key, not a release key")
+
+    prev_root_ids = {k["id"] for k in prev_doc["keys"]["root"]}
+    next_root_ids = {k["id"] for k in verified_next["keys"]["root"]}
+    event = "rotate" if prev_root_ids != next_root_ids else "revoke"
+    leaf_digest = b3_hex(canonicalize(verified_next))
+    log_index, _checkpoint = originstore.append_log_leaf(
+        store, fingerprint, event=event, digest=leaf_digest,
+        release_private_key=release_loaded.private_key, release_key_id=release_loaded.key_id,
+    )
+
+    click.echo(f"imported root v{new_version} for {fingerprint} ({event})")
+    click.echo(f"log: leaf {log_index} appended")

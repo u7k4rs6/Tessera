@@ -158,7 +158,7 @@ async def test_publish_fetch_verify_end_to_end(runner, workspace):
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload["ok"] is True
-        assert {c["id"] for c in payload["checks"]} == {"V1", "V2", "V4", "V5", "V6", "V8", "V9"}
+        assert {c["id"] for c in payload["checks"]} == {"V1", "V2", "V4", "V5", "V6", "V7", "V8", "V9"}
         assert all(c["ok"] for c in payload["checks"])
 
         materialized = Path(payload["materialized"])

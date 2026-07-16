@@ -72,11 +72,14 @@ async def fetch_verified_snapshot(client: OriginClient, fingerprint: str, snapsh
 
 async def fetch_verified_root_chain(
     home: Path, client: OriginClient, publisher_name: str, fingerprint: str
-) -> tuple[dict, frozenset[str]]:
+) -> tuple[dict, dict, frozenset[str]]:
     """Implements the M3 chain-walk form of V2. Fetches every root version
     from 1 up to the first 404, verifies the whole chain, checks the result
     against the consumer's persisted rollback high-water mark, and advances
-    it. Returns (current root document, accumulated revoked-key-id set).
+    it. Returns (current root envelope, current root document, accumulated
+    revoked-key-id set) -- the envelope is returned alongside the document
+    so callers can cache the exact bytes for `verify_flow.py`'s offline
+    re-check path, without a second round trip to re-fetch the head.
     """
     envelopes = []
     version = 1
@@ -93,7 +96,7 @@ async def fetch_verified_root_chain(
     hwm = trust_store.get_root_version_hwm(home, publisher_name)
     doc, revoked = verify_root_chain(envelopes, pinned_fingerprint=fingerprint, min_version=hwm)
     trust_store.check_and_advance_root_version(home, publisher_name, doc["root_version"])
-    return doc, revoked
+    return envelopes[-1], doc, revoked
 
 
 async def fetch_verified_checkpoint(

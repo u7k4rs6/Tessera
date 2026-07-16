@@ -100,6 +100,11 @@ class OriginClient:
             f"/v1/{publisher}/log/proof/consistency/{old_size}/{new_size}", MAX_SNAPSHOT_BYTES
         )
 
+    async def get_log_leaves(self, publisher: str) -> list | None:
+        # For `mirror sync` only -- raw, untrusted leaves; scales with the
+        # tree like a snapshot/consistency proof.
+        return await self._get_json(f"/v1/{publisher}/log/leaves", MAX_SNAPSHOT_BYTES)
+
     async def _read_bounded(self, resp: aiohttp.ClientResponse, path: str, max_bytes: int) -> bytes:
         buf = bytearray()
         async for piece in resp.content.iter_chunked(_READ_CHUNK_SIZE):

@@ -130,8 +130,9 @@ def _publish_genesis_root(origin_store):
 async def test_fetch_verified_root_chain_single_version(consumer_home, origin_store, server):
     doc, sk, kid = _publish_genesis_root(origin_store)
     async with OriginClient(str(server.make_url(""))) as client:
-        result_doc, revoked = await fetch_verified_root_chain(consumer_home, client, "acme-lab", kid)
+        result_envelope, result_doc, revoked = await fetch_verified_root_chain(consumer_home, client, "acme-lab", kid)
     assert result_doc == doc
+    assert result_envelope is not None
     assert revoked == frozenset()
 
 
@@ -147,8 +148,9 @@ async def test_fetch_verified_root_chain_walks_a_rotation(consumer_home, origin_
     originstore.write_root_doc(origin_store, kid1, 2, envelope2)
 
     async with OriginClient(str(server.make_url(""))) as client:
-        result_doc, revoked = await fetch_verified_root_chain(consumer_home, client, "acme-lab", kid1)
+        result_envelope, result_doc, revoked = await fetch_verified_root_chain(consumer_home, client, "acme-lab", kid1)
     assert result_doc == doc2
+    assert result_envelope == envelope2
 
 
 async def test_fetch_verified_root_chain_missing_is_network_error(consumer_home, origin_store, server):

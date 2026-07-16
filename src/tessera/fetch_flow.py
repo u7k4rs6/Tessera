@@ -1,30 +1,34 @@
 """The flagship consumer flow: `fetch`, per 02_TECHNICAL_ARCHITECTURE.md
 section 7 and 03_SECURITY_AND_ACCESS.md section 6.
 
-M2 implements V1 (pin), V2 (root, degraded single-doc form, now with the
-rollback high-water mark), V4 (timestamp), V5 (snapshot), V6 (manifest,
-now with the per-artifact rollback high-water mark), V8 (per-chunk
-hash-before-write, now scheduled across a `PeerPool` with retry-elsewhere
-on a bad or unavailable peer), and V9 (assembly). V3 (revocations -- still
-none exist), V7 (transparency log), and V10 (provenance) remain M3.
+Implements the full V1-V10 pipeline: V1 (pin), V2 (root chain walk from
+genesis through every rotation, M3, with the rollback high-water mark and
+accumulated key revocations), V4 (timestamp, revocation-aware), V5
+(snapshot), V6 (manifest, revocation-aware, per-artifact rollback
+high-water mark), V7 (M3: transparency log -- checkpoint freshness, this
+release's inclusion proof, cross-source equivocation check), V8 (per-chunk
+hash-before-write across a `PeerPool` with retry-elsewhere on a bad or
+unavailable peer), V9 (assembly), and V10 (M3: provenance attestation,
+only when the manifest names one -- provenance is optional per D3).
 
-Metadata resolution (V2/V4/V5/V6) falls back across every configured peer
-in score order (`_try_each_peer`): each document is independently verified
-regardless of which peer served it, so a bad or unavailable peer there is
-just an availability/scoring event, not a reason to fail the whole fetch
-while an honest peer is still available (Open Decision 6 in the M2 plan).
-Chunk fetching (V8, `_fetch_and_verify_chunks`) is scheduled with real
-concurrency across the pool, retrying a mismatched or failed chunk against
-a different peer -- a digest mismatch there is the harsher signal (T1):
-the offending peer is blacklisted for the rest of the session and takes a
-large persistent score penalty, saved immediately. The materialization
-gate is unchanged: nothing is renamed into `verified/` until every file's
-V9 check has passed.
+Metadata resolution (V2/V4/V5/V6/V7) falls back across every configured
+peer in score order (`_try_each_peer`): each document is independently
+verified regardless of which peer served it, so a bad or unavailable peer
+there is just an availability/scoring event, not a reason to fail the
+whole fetch while an honest peer is still available (Open Decision 6 in
+the M2 plan). Chunk fetching (V8, `_fetch_and_verify_chunks`) is scheduled
+with real concurrency across the pool, retrying a mismatched or failed
+chunk against a different peer -- a digest mismatch there is the harsher
+signal (T1): the offending peer is blacklisted for the rest of the session
+and takes a large persistent score penalty, saved immediately. The
+materialization gate is unchanged: nothing is renamed into `verified/`
+until every file's V9 check has passed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -32,22 +36,24 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable, TypeVar
 
-from . import cas, freshness, trust_store
+from . import cas, freshness, log as log_mod, trust_store
 from .chunking import compute_file_digest, iter_chunks
 from .errors import (
     DigestMismatchError,
     ExitCode,
+    LogFailureError,
     NetworkError,
     ReferenceNotFoundError,
     TesseraError,
     UsageError,
 )
 from .httpclient import OriginClient
-from .manifest import verify_manifest_envelope
+from .manifest import content_digest, verify_manifest_envelope
 from .peers import PeerPool
+from .provenance import verify_provenance_envelope
 from .quarantine import quarantine_file
 from .result import build_result, check_fail, check_ok
-from .root import authorized_keys_for_role, verify_root_doc
+from .root import authorized_keys_for_role
 from .store import verified_dir
 from .trust_store import cache_manifest, cache_root_envelope, load_pin
 
@@ -69,7 +75,26 @@ def _reset_staging_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _materialize(staging_root: Path, final_path: Path) -> None:
+STATUS_BREADCRUMB_NAME = ".tessera-status.json"
+
+
+def _signer_key_id(envelope: dict, authorized_keys: dict[str, bytes]) -> str | None:
+    """Best-effort: the first signature entry whose keyid is in
+    `authorized_keys`. The envelope already verified by this point, so this
+    is just picking a representative signer to remember for `status.py`'s
+    later reconciliation, not itself a trust decision.
+    """
+    for entry in envelope.get("signatures", []):
+        keyid = entry.get("keyid") if isinstance(entry, dict) else None
+        if keyid in authorized_keys:
+            return keyid
+    return None
+
+
+def _materialize(staging_root: Path, final_path: Path, *, manifest_digest: str, release_key_id: str | None) -> None:
+    breadcrumb_path = staging_root / STATUS_BREADCRUMB_NAME
+    breadcrumb_path.write_text(json.dumps({"manifest_digest": manifest_digest, "release_key_id": release_key_id}))
+
     final_path.parent.mkdir(parents=True, exist_ok=True)
     if final_path.exists():
         shutil.rmtree(final_path)
@@ -183,31 +208,26 @@ async def fetch(home: Path, pool: PeerPool, ref: str) -> dict:
     fingerprint = pin["fingerprint"]
     check_ok(checks, "V1", f"{publisher_name} -> {fingerprint}")
 
-    # V2: root document (degraded single-doc form; rollback-checked against the hwm)
+    # V2: root chain walk from genesis through the current rotation (M3),
+    # rollback-checked against the hwm; accumulates every revoked key id.
     try:
-        async def _get_root(client: OriginClient):
-            envelope = await client.get_root(fingerprint, 1)
-            if envelope is None:
-                raise NetworkError(f"origin has no root document for {fingerprint}", peer=client.base_url)
-            hwm = trust_store.get_root_version_hwm(home, publisher_name)
-            doc = verify_root_doc(envelope, pinned_fingerprint=fingerprint, min_version=hwm)
-            return envelope, doc
+        async def _get_root_chain(client: OriginClient):
+            return await freshness.fetch_verified_root_chain(home, client, publisher_name, fingerprint)
 
-        root_envelope, root_doc = await _try_each_peer(pool, _get_root)
-        trust_store.check_and_advance_root_version(home, publisher_name, root_doc["root_version"])
+        root_envelope, root_doc, revoked_keys = await _try_each_peer(pool, _get_root_chain)
     except TesseraError as e:
         check_fail(checks, "V2", e)
         return build_result("fetch", ref, False, e.exit_code, checks)
     cache_root_envelope(home, publisher_name, root_envelope)
-    check_ok(checks, "V2", f"root v{root_doc['root_version']}, 0 revocations apply")
+    check_ok(checks, "V2", f"root v{root_doc['root_version']}, {len(revoked_keys)} revocation(s) apply")
 
-    # V4: timestamp freshness (signature, expiry, rollback, equivocation)
+    # V4: timestamp freshness (signature, expiry, rollback, equivocation, revocation)
     try:
         authorized_timestamp = authorized_keys_for_role(root_doc, "timestamp")
 
         async def _get_timestamp(client: OriginClient):
             return await freshness.fetch_verified_timestamp(
-                home, client, publisher_name, fingerprint, authorized_timestamp
+                home, client, publisher_name, fingerprint, authorized_timestamp, revoked_keys=revoked_keys
             )
 
         timestamp_stmt = await _try_each_peer(pool, _get_timestamp)
@@ -250,6 +270,7 @@ async def fetch(home: Path, pool: PeerPool, ref: str) -> dict:
                 name=artifact,
                 version=version,
                 min_seq=artifact_seq_hwm,
+                revoked_keys=revoked_keys,
             )
             return envelope, manifest
 
@@ -260,6 +281,40 @@ async def fetch(home: Path, pool: PeerPool, ref: str) -> dict:
         return build_result("fetch", ref, False, e.exit_code, checks)
     cache_manifest(home, publisher_name, artifact, version, expected_digest, manifest_envelope)
     check_ok(checks, "V6", f"{expected_digest} sig ok, name/version match")
+
+    # V7: transparency log -- checkpoint freshness/consistency, this release's
+    # inclusion proof, and cross-source equivocation (T5B). The log is
+    # mandatory (Decision 2): a release with no recorded log index fails
+    # closed rather than silently skipping the check.
+    try:
+        log_index = version_entry.get("log_index")
+        if log_index is None:
+            raise LogFailureError(
+                f"no transparency log index recorded for {artifact}@{version}; the log is mandatory"
+            )
+
+        async def _get_checkpoint(client: OriginClient):
+            checkpoint = await freshness.fetch_verified_checkpoint(
+                home, client, publisher_name, fingerprint, authorized_release, revoked_keys=revoked_keys
+            )
+            return client, checkpoint
+
+        checkpoint_client, checkpoint = await _try_each_peer(pool, _get_checkpoint)
+
+        expected_leaf_hash = log_mod.leaf_hash(
+            log_mod.build_leaf(seq=log_index, event="publish", digest=expected_digest, publisher=fingerprint)
+        )
+        await freshness.fetch_verified_inclusion(
+            checkpoint_client, fingerprint, checkpoint["tree_size"], log_index, expected_leaf_hash,
+            checkpoint["root_hash"],
+        )
+        await freshness.cross_check_checkpoints(
+            pool, fingerprint, checkpoint, authorized_keys=authorized_release, revoked_keys=revoked_keys
+        )
+    except TesseraError as e:
+        check_fail(checks, "V7", e)
+        return build_result("fetch", ref, False, e.exit_code, checks)
+    check_ok(checks, "V7", f"checkpoint tree_size {checkpoint['tree_size']}, leaf {log_index} included")
 
     # V8: fetch + verify every chunk across the peer pool before it ever touches the CAS
     staging_root = verified_dir(home) / ".staging" / publisher_name / artifact / version
@@ -301,8 +356,35 @@ async def fetch(home: Path, pool: PeerPool, ref: str) -> dict:
         return build_result("fetch", ref, False, e.exit_code, checks)
     check_ok(checks, "V9", f"{len(manifest['files'])} files, artifact digest {expected_digest}")
 
+    # V10: provenance attestation, only when this manifest names one (D3:
+    # provenance is optional -- an artifact with no lineage to attest to
+    # simply has `provenance: null` and this check is skipped entirely).
+    if manifest.get("provenance"):
+        attestation_digest = manifest["provenance"]
+        try:
+            subject_digest = content_digest(manifest)
+
+            async def _get_provenance(client: OriginClient):
+                envelope = await client.get_manifest(attestation_digest)
+                if envelope is None:
+                    raise NetworkError(f"provenance {attestation_digest} not found at origin", peer=client.base_url)
+                return verify_provenance_envelope(
+                    envelope,
+                    authorized_keys=authorized_release,
+                    expected_digest=attestation_digest,
+                    subject_manifest_digest=subject_digest,
+                    revoked_keys=revoked_keys,
+                )
+
+            await _try_each_peer(pool, _get_provenance)
+        except TesseraError as e:
+            check_fail(checks, "V10", e)
+            return build_result("fetch", ref, False, e.exit_code, checks)
+        check_ok(checks, "V10", f"provenance {attestation_digest} verified")
+
     final_path = verified_dir(home) / publisher_name / artifact / version
-    _materialize(staging_root, final_path)
+    release_key_id = _signer_key_id(manifest_envelope, authorized_release)
+    _materialize(staging_root, final_path, manifest_digest=expected_digest, release_key_id=release_key_id)
 
     elapsed = time.monotonic() - started
     total_bytes = sum(f["size"] for f in manifest["files"])

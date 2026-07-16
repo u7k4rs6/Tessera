@@ -17,7 +17,7 @@ from tessera.timestamp import build_timestamp_statement, sign_timestamp
 
 pytestmark = pytest.mark.asyncio
 
-EXPECTED_CHECK_IDS = {"V1", "V2", "V4", "V5", "V6", "V8", "V9"}
+EXPECTED_CHECK_IDS = {"V1", "V2", "V4", "V5", "V6", "V7", "V8", "V9"}
 
 
 @pytest.fixture
@@ -70,7 +70,10 @@ def published_artifact(tmp_path, origin_store):
     digest = manifest_digest(manifest)
     envelope = sign_manifest(manifest, release_sk, release_kid)
     originstore.write_manifest_envelope(origin_store, digest, envelope)
-    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest)
+    log_index, _checkpoint = originstore.append_log_leaf(
+        origin_store, root_kid, event="publish", digest=digest, release_private_key=release_sk, release_key_id=release_kid
+    )
+    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest, log_index=log_index)
 
     reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
 
@@ -86,7 +89,7 @@ def reissue_timestamp(origin_store, fingerprint, timestamp_sk, timestamp_kid):
             pointer = originstore.read_current_pointer(origin_store, fingerprint, artifact, version)
             manifest_env = originstore.read_manifest_envelope(origin_store, pointer["digest"])
             seq = json.loads(base64.b64decode(manifest_env["payload"]))["seq"]
-            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"]}
+            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"], "log_index": pointer.get("log_index")}
             if seq > best_seq:
                 best_seq, best_version = seq, version
         artifacts[artifact] = {"current_version": best_version, "versions": versions}

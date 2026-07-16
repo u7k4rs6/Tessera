@@ -27,6 +27,15 @@ itself). Inclusion/consistency proof responses carry only `{"proof": [...]}`
 recomputes that independently from data it already trusts (the manifest
 digest, log_index, and publisher it already has) rather than trusting
 anything the server reports about what a leaf "is".
+
+`GET /v1/{publisher}/log/leaves` is the one exception -- it serves the raw
+leaf list, untrusted (a leaf's `digest` field is meaningless until it
+appears inside a leaf hash a real inclusion proof authenticates). It
+exists only for `mirror sync`, which needs its own on-disk copy of
+`leaves.json` so its own instance of THIS SAME `handle_log_inclusion_proof`/
+`handle_log_consistency_proof` can compute correct proofs for consumers
+fetching from that mirror later -- consumers never call this route
+themselves.
 """
 
 from __future__ import annotations
@@ -67,6 +76,7 @@ def build_app(store: Path) -> web.Application:
             web.get("/v1/{publisher}/log/checkpoint/{tree_size}", handle_log_checkpoint_at),
             web.get("/v1/{publisher}/log/proof/inclusion/{tree_size}/{leaf_index}", handle_log_inclusion_proof),
             web.get("/v1/{publisher}/log/proof/consistency/{old_size}/{new_size}", handle_log_consistency_proof),
+            web.get("/v1/{publisher}/log/leaves", handle_log_leaves),
         ]
     )
     return app
@@ -180,6 +190,18 @@ async def handle_log_inclusion_proof(request: web.Request) -> web.Response:
     except LogFailureError:
         raise web.HTTPBadRequest(text="could not compute inclusion proof")
     return web.json_response({"proof": proof})
+
+
+async def handle_log_leaves(request: web.Request) -> web.Response:
+    """Raw, untrusted leaf list -- for `mirror sync` only, see module
+    docstring.
+    """
+    publisher = request.match_info["publisher"]
+    _validate_component(publisher)
+
+    store: Path = request.app[STORE_KEY]
+    leaves = originstore.read_log_leaves(store, publisher)
+    return web.json_response(leaves)
 
 
 async def handle_log_consistency_proof(request: web.Request) -> web.Response:

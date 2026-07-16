@@ -47,7 +47,7 @@ def _reissue_timestamp(origin_store, fingerprint, timestamp_sk, timestamp_kid):
             pointer = originstore.read_current_pointer(origin_store, fingerprint, artifact, version)
             manifest_env = originstore.read_manifest_envelope(origin_store, pointer["digest"])
             seq = json.loads(base64.b64decode(manifest_env["payload"]))["seq"]
-            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"]}
+            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"], "log_index": pointer.get("log_index")}
             if seq > best_seq:
                 best_seq, best_version = seq, version
         artifacts[artifact] = {"current_version": best_version, "versions": versions}
@@ -93,7 +93,10 @@ async def test_t2b_stale_mirror_replay_rejected_as_rollback(tmp_path):
     m1 = build_manifest(src_v1, origin_store, publisher=root_kid, name="bert-tiny", version="1.0.0", seq=1, artifact_type="model")
     d1 = manifest_digest(m1)
     originstore.write_manifest_envelope(origin_store, d1, sign_manifest(m1, release_sk, release_kid))
-    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.0.0", d1)
+    log_index1, _cp1 = originstore.append_log_leaf(
+        origin_store, root_kid, event="publish", digest=d1, release_private_key=release_sk, release_key_id=release_kid
+    )
+    originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.0.0", d1, log_index=log_index1)
     _reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
 
     server = TestServer(build_app(origin_store))
@@ -116,7 +119,10 @@ async def test_t2b_stale_mirror_replay_rejected_as_rollback(tmp_path):
         m2 = build_manifest(src_v2, origin_store, publisher=root_kid, name="bert-tiny", version="2.0.0", seq=2, artifact_type="model")
         d2 = manifest_digest(m2)
         originstore.write_manifest_envelope(origin_store, d2, sign_manifest(m2, release_sk, release_kid))
-        originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "2.0.0", d2)
+        log_index2, _cp2 = originstore.append_log_leaf(
+            origin_store, root_kid, event="publish", digest=d2, release_private_key=release_sk, release_key_id=release_kid
+        )
+        originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "2.0.0", d2, log_index=log_index2)
         _reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
 
         async with PeerPool(consumer_home, [str(server.make_url(""))]) as pool:
