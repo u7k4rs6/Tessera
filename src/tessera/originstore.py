@@ -24,12 +24,27 @@ Snapshot bytes are written and read RAW (`atomic_write_bytes`/
 byte-exactness requirement in `snapshot.py`'s docstring: re-serializing
 through `json.dumps` would silently change the bytes a digest was computed
 over.
+
+The transparency log (M3) is stored as a single atomic JSON array
+(`log/leaves.json`) plus the latest checkpoint (`log/checkpoint.json`) and
+a per-tree-size checkpoint history (`log/checkpoint/<size>.json`) --
+`append_log_leaf` is lock-protected exactly like `next_seq`/
+`next_timestamp_seq`, since allocating the next leaf index and re-signing
+the checkpoint must be atomic against a concurrent publish/rotate/revoke.
+This is a deliberate simplification from the architecture doc's framing of
+log leaves as individually content-addressed objects that mirrors
+replicate automatically like any other content (DECISIONS.md, log storage
+decision): a single JSON array is simpler and matches D9's "inspectable
+JSON over cleverness" philosophy, at the cost of `mirror sync` needing an
+explicit added step to pull the log rather than getting it "for free" the
+way it walks chunks.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from . import log as log_mod
 from .errors import InternalError
 from .hashing import is_valid_digest
 from .store import atomic_write_bytes, atomic_write_json, locked, read_json
@@ -88,6 +103,18 @@ def current_dir(store: Path, fingerprint: str) -> Path:
     return publisher_dir(store, fingerprint) / "current"
 
 
+def log_leaves_path(store: Path, fingerprint: str) -> Path:
+    return publisher_dir(store, fingerprint) / "log" / "leaves.json"
+
+
+def checkpoint_path(store: Path, fingerprint: str) -> Path:
+    return publisher_dir(store, fingerprint) / "log" / "checkpoint.json"
+
+
+def checkpoint_history_path(store: Path, fingerprint: str, tree_size: int) -> Path:
+    return publisher_dir(store, fingerprint) / "log" / "checkpoint" / f"{int(tree_size)}.json"
+
+
 def write_root_doc(store: Path, fingerprint: str, version: int, envelope: dict) -> None:
     atomic_write_json(root_doc_path(store, fingerprint, version), envelope)
 
@@ -106,8 +133,12 @@ def read_manifest_envelope(store: Path, digest: str) -> dict | None:
     return read_json(path) if path.exists() else None
 
 
-def write_current_pointer(store: Path, fingerprint: str, artifact: str, version: str, digest: str) -> None:
-    atomic_write_json(current_pointer_path(store, fingerprint, artifact, version), {"digest": digest})
+def write_current_pointer(
+    store: Path, fingerprint: str, artifact: str, version: str, digest: str, *, log_index: int | None = None
+) -> None:
+    atomic_write_json(
+        current_pointer_path(store, fingerprint, artifact, version), {"digest": digest, "log_index": log_index}
+    )
 
 
 def read_current_pointer(store: Path, fingerprint: str, artifact: str, version: str) -> dict | None:
@@ -177,3 +208,53 @@ def list_versions(store: Path, fingerprint: str, artifact: str) -> list[str]:
     if not base.is_dir():
         return []
     return sorted(p.stem for p in base.iterdir() if p.is_file() and p.suffix == ".json")
+
+
+def read_log_leaves(store: Path, fingerprint: str) -> list[dict]:
+    path = log_leaves_path(store, fingerprint)
+    return read_json(path) if path.exists() else []
+
+
+def read_checkpoint(store: Path, fingerprint: str) -> dict | None:
+    path = checkpoint_path(store, fingerprint)
+    return read_json(path) if path.exists() else None
+
+
+def read_checkpoint_at(store: Path, fingerprint: str, tree_size: int) -> dict | None:
+    path = checkpoint_history_path(store, fingerprint, tree_size)
+    return read_json(path) if path.exists() else None
+
+
+def append_log_leaf(
+    store: Path,
+    fingerprint: str,
+    *,
+    event: str,
+    digest: str,
+    release_private_key,
+    release_key_id: str,
+) -> tuple[int, dict]:
+    """Append a new leaf (the next tree index is assigned automatically) and
+    re-sign a fresh checkpoint over the resulting tree. Lock-protected: the
+    read-current-size + append + re-sign sequence must be atomic against a
+    concurrent publish/rotate/revoke on the same store, same reasoning as
+    `next_seq`. Returns (new_leaf_index, checkpoint_envelope).
+    """
+    leaves_path = log_leaves_path(store, fingerprint)
+    with locked(leaves_path):
+        existing = read_json(leaves_path) if leaves_path.exists() else []
+        new_index = len(existing)
+        leaf = log_mod.build_leaf(seq=new_index, event=event, digest=digest, publisher=fingerprint)
+        existing.append(leaf)
+        atomic_write_json(leaves_path, existing)
+
+        hashes = [log_mod.leaf_hash(entry) for entry in existing]
+        root_hash = log_mod.merkle_root(hashes)
+        tree_size = len(existing)
+        checkpoint = log_mod.build_checkpoint(publisher=fingerprint, tree_size=tree_size, root_hash=root_hash)
+        checkpoint_envelope = log_mod.sign_checkpoint(checkpoint, release_private_key, release_key_id)
+
+        atomic_write_json(checkpoint_path(store, fingerprint), checkpoint_envelope)
+        atomic_write_json(checkpoint_history_path(store, fingerprint, tree_size), checkpoint_envelope)
+
+    return new_index, checkpoint_envelope
