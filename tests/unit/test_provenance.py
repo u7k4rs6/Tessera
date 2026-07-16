@@ -4,6 +4,7 @@ import json
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from tessera.dsse import sign
 from tessera.errors import KeyRevokedError, ProvenanceInvalidError, SignatureError
 from tessera.keys import key_id, public_bytes
 from tessera.provenance import build_provenance, provenance_digest, sign_provenance, verify_provenance_envelope
@@ -106,4 +107,17 @@ def test_t5a_mutating_any_field_of_a_signed_attestation_breaks_the_signature(mut
     with pytest.raises(SignatureError):
         verify_provenance_envelope(
             tampered, authorized_keys={kid: pub}, expected_digest=digest, subject_manifest_digest=doc["subject"]["digest"]
+        )
+
+
+def test_payload_that_is_not_a_json_object_is_rejected_cleanly():
+    # M4: a validly-signed payload of `null`/a bare list/etc. must fail
+    # closed with ProvenanceInvalidError, not crash with AttributeError.
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    envelope = sign(b"null", sk, kid)
+    with pytest.raises(ProvenanceInvalidError):
+        verify_provenance_envelope(
+            envelope, authorized_keys={kid: pub}, expected_digest="b3:" + "0" * 64, subject_manifest_digest="b3:" + "1" * 64
         )

@@ -74,6 +74,8 @@ def verify_provenance_envelope(
         parsed = json.loads(payload)
     except (ValueError, UnicodeDecodeError) as e:
         raise ProvenanceInvalidError("provenance payload is not valid JSON") from e
+    if not isinstance(parsed, dict):
+        raise ProvenanceInvalidError("provenance payload is not a JSON object")
 
     if canonicalize(parsed) != payload:
         raise ProvenanceInvalidError("provenance payload is not canonical JSON")

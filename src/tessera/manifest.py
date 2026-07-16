@@ -158,6 +158,8 @@ def verify_manifest_envelope(
         parsed = json.loads(payload)
     except (ValueError, UnicodeDecodeError) as e:
         raise SignatureError("manifest payload is not valid JSON") from e
+    if not isinstance(parsed, dict):
+        raise SignatureError("manifest payload is not a JSON object")
 
     if canonicalize(parsed) != payload:
         # The signature is valid over these exact bytes, but the bytes are

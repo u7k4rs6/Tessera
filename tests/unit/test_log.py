@@ -1,6 +1,7 @@
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from tessera.dsse import sign
 from tessera.errors import KeyRevokedError, LogFailureError, SignatureError
 from tessera.hashing import b3_hex
 from tessera.keys import key_id, public_bytes
@@ -184,3 +185,26 @@ def test_checkpoint_rejects_tampered_tree_size():
     tampered["payload"] = base64.b64encode(json.dumps(payload).encode()).decode()
     with pytest.raises(SignatureError):
         verify_checkpoint_envelope(tampered, authorized_keys={kid: pub}, publisher=cp["publisher"])
+
+
+def test_checkpoint_payload_that_is_not_a_json_object_is_rejected_cleanly():
+    # M4: a validly-signed payload of `null`/a bare list/etc. must fail
+    # closed with SignatureError, not crash with AttributeError on `.get()`.
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    envelope = sign(b"null", sk, kid)
+    with pytest.raises(SignatureError):
+        verify_checkpoint_envelope(envelope, authorized_keys={kid: pub}, publisher="b3:" + "1" * 64)
+
+
+def test_verify_inclusion_rejects_malformed_proof_element():
+    # M4: a non-hex proof element must fail closed with LogFailureError,
+    # not crash with a bare ValueError out of hashing.parse_b3.
+    with pytest.raises(LogFailureError):
+        verify_inclusion(b3_hex(b"leaf"), 0, 2, b3_hex(b"root"), ["not-a-digest"])
+
+
+def test_verify_consistency_rejects_malformed_proof_element():
+    with pytest.raises(LogFailureError):
+        verify_consistency(1, b3_hex(b"old"), 2, b3_hex(b"new"), [b3_hex(b"a"), "not-a-digest"])

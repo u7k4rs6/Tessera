@@ -36,7 +36,7 @@ import json
 from . import dsse
 from .canonical import canonicalize
 from .errors import LogFailureError, SignatureError
-from .hashing import b3_hex, parse_b3
+from .hashing import b3_hex, is_valid_digest, parse_b3
 
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
@@ -109,9 +109,24 @@ def verify_inclusion(leaf_hash_value: str, leaf_index: int, tree_size: int, root
     """
     if not (0 <= leaf_index < tree_size):
         raise LogFailureError(f"leaf index {leaf_index} out of range for a tree of size {tree_size}")
+    _validate_proof_elements(proof)
     computed = _root_from_inclusion_proof(leaf_index, tree_size, leaf_hash_value, proof)
     if computed != root_hash:
         raise LogFailureError("inclusion proof does not reproduce the expected root hash")
+
+
+def _validate_proof_elements(proof: list[str]) -> None:
+    """Both proof types are ultimately lists of digest strings that get
+    hex-decoded (`parse_b3`, which raises a bare `ValueError`, not a
+    `TesseraError`) -- a malformed element from an untrusted peer must
+    fail closed with `LogFailureError` here, before any decoding is
+    attempted, rather than crash the caller with an unhandled exception.
+    """
+    if not isinstance(proof, list):
+        raise LogFailureError("proof is not a list")
+    for element in proof:
+        if not isinstance(element, str) or not is_valid_digest(element):
+            raise LogFailureError("proof contains a malformed digest")
 
 
 def _root_from_inclusion_proof(m: int, n: int, leaf: str, proof: list[str]) -> str:
@@ -143,6 +158,7 @@ def consistency_proof(hashes: list[str], old_size: int, new_size: int) -> list[s
 def verify_consistency(old_size: int, old_root: str, new_size: int, new_root: str, proof: list[str]) -> None:
     if old_size > new_size:
         raise LogFailureError(f"old tree size {old_size} is larger than new tree size {new_size}")
+    _validate_proof_elements(proof)
     if len(proof) != new_size:
         raise LogFailureError(f"consistency proof has {len(proof)} leaf hashes, expected {new_size}")
     if merkle_root(proof[:old_size]) != old_root:
@@ -174,6 +190,8 @@ def verify_checkpoint_envelope(
         parsed = json.loads(payload)
     except (ValueError, UnicodeDecodeError) as e:
         raise SignatureError("checkpoint payload is not valid JSON") from e
+    if not isinstance(parsed, dict):
+        raise SignatureError("checkpoint payload is not a JSON object")
 
     if canonicalize(parsed) != payload:
         raise SignatureError("checkpoint payload is not canonical JSON")

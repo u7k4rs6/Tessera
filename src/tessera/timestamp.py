@@ -75,6 +75,8 @@ def verify_timestamp_envelope(
         parsed = json.loads(payload)
     except (ValueError, UnicodeDecodeError) as e:
         raise SignatureError("timestamp payload is not valid JSON") from e
+    if not isinstance(parsed, dict):
+        raise SignatureError("timestamp payload is not a JSON object")
 
     if canonicalize(parsed) != payload:
         raise SignatureError("timestamp payload is not canonical JSON")
