@@ -32,7 +32,7 @@ from pathlib import Path
 
 from .errors import InternalError
 from .hashing import is_valid_digest
-from .store import atomic_write_bytes, atomic_write_json, read_json
+from .store import atomic_write_bytes, atomic_write_json, locked, read_json
 
 
 def validate_path_component(value: str, field: str) -> None:
@@ -116,12 +116,16 @@ def read_current_pointer(store: Path, fingerprint: str, artifact: str, version: 
 
 
 def next_seq(store: Path, fingerprint: str, artifact: str) -> int:
-    """Allocate and persist the next per-artifact monotonic seq number."""
+    """Allocate and persist the next per-artifact monotonic seq number.
+    Lock-protected: two concurrent `publish` invocations must never
+    allocate the same seq twice.
+    """
     path = seq_counter_path(store, fingerprint, artifact)
-    current = read_json(path)["seq"] if path.exists() else 0
-    new_seq = current + 1
-    atomic_write_json(path, {"seq": new_seq})
-    return new_seq
+    with locked(path):
+        current = read_json(path)["seq"] if path.exists() else 0
+        new_seq = current + 1
+        atomic_write_json(path, {"seq": new_seq})
+        return new_seq
 
 
 def write_timestamp(store: Path, fingerprint: str, envelope: dict) -> None:
@@ -135,12 +139,15 @@ def read_timestamp(store: Path, fingerprint: str) -> dict | None:
 
 
 def next_timestamp_seq(store: Path, fingerprint: str) -> int:
-    """Allocate and persist the next publisher-wide monotonic timestamp seq."""
+    """Allocate and persist the next publisher-wide monotonic timestamp seq.
+    Lock-protected, same reasoning as `next_seq`.
+    """
     path = timestamp_seq_path(store, fingerprint)
-    current = read_json(path)["seq"] if path.exists() else 0
-    new_seq = current + 1
-    atomic_write_json(path, {"seq": new_seq})
-    return new_seq
+    with locked(path):
+        current = read_json(path)["seq"] if path.exists() else 0
+        new_seq = current + 1
+        atomic_write_json(path, {"seq": new_seq})
+        return new_seq
 
 
 def write_snapshot(store: Path, fingerprint: str, digest: str, canonical_bytes: bytes) -> None:

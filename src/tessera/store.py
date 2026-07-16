@@ -15,6 +15,8 @@ directory -- both share this same CAS-centric layout.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import tempfile
@@ -85,3 +87,24 @@ def atomic_write_json(path: Path, obj, *, mode: int = 0o644) -> None:
 def read_json(path: Path):
     with open(path, "rb") as f:
         return json.loads(f.read())
+
+
+@contextlib.contextmanager
+def locked(path: Path):
+    """Hold an exclusive advisory lock on a `.lock` file next to `path` for
+    the duration of the context. Protects a read-modify-write sequence
+    (e.g. monotonic seq counter allocation) against two processes racing
+    on the same file -- without this, two concurrent `publish` invocations
+    against the same origin store could allocate the same seq number
+    twice, silently breaking the uniqueness the rollback high-water marks
+    depend on. POSIX only (`fcntl`), matching this project's existing
+    platform assumptions (0600 key file permissions, etc.).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.parent / f".{path.name}.lock"
+    with open(lock_path, "a+") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)

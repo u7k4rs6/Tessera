@@ -1,3 +1,5 @@
+import concurrent.futures
+
 import pytest
 
 from tessera import originstore, store as store_mod
@@ -23,6 +25,28 @@ def test_next_timestamp_seq_monotonic(store):
     assert originstore.next_timestamp_seq(store, FP) == 1
     assert originstore.next_timestamp_seq(store, FP) == 2
     assert originstore.next_timestamp_seq(store, FP) == 3
+
+
+def test_next_seq_is_lock_protected_against_concurrent_publish(store):
+    # Without the lock in originstore.next_seq, concurrent callers could
+    # both read the same "current" value and allocate the same seq twice --
+    # silently breaking the uniqueness the rollback high-water marks
+    # depend on. Real OS threads (not asyncio tasks) are needed here since
+    # fcntl locks are contended at the OS level, and file I/O/flock releases
+    # the GIL, so this genuinely exercises the race the lock prevents.
+    n = 40
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
+        results = list(pool.map(lambda _: originstore.next_seq(store, FP, "bert-tiny"), range(n)))
+
+    assert sorted(results) == list(range(1, n + 1)), "every seq must be allocated exactly once, with no gaps"
+
+
+def test_next_timestamp_seq_is_lock_protected_against_concurrent_reissue(store):
+    n = 40
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
+        results = list(pool.map(lambda _: originstore.next_timestamp_seq(store, FP), range(n)))
+
+    assert sorted(results) == list(range(1, n + 1))
 
 
 def test_snapshot_raw_bytes_round_trip_not_rebuilt_json(store):
