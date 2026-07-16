@@ -158,3 +158,87 @@ async def test_snapshot_rejects_malformed_digest(store, running_server):
     async with OriginClient(str(running_server.make_url(""))) as client:
         with pytest.raises(NetworkError):
             await client.get_snapshot(fingerprint, "not-a-digest")
+
+
+async def _append_leaves(store, fingerprint, n):
+    from tessera import originstore as originstore_mod
+
+    sk = Ed25519PrivateKey.generate()
+    pub = public_bytes(sk.public_key())
+    kid = key_id(pub)
+    for i in range(n):
+        originstore_mod.append_log_leaf(
+            store, fingerprint, event="publish", digest=f"b3:{i:064x}", release_private_key=sk, release_key_id=kid
+        )
+    return sk, kid
+
+
+async def test_checkpoint_round_trip_and_404(store, running_server):
+    fingerprint = "b3:" + "d" * 64
+    await _append_leaves(store, fingerprint, 3)
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        fetched = await client.get_checkpoint(fingerprint)
+        assert fetched is not None
+
+        missing = await client.get_checkpoint("b3:" + "e" * 64)
+        assert missing is None
+
+
+async def test_checkpoint_at_tree_size_round_trip_and_404(store, running_server):
+    fingerprint = "b3:" + "d" * 64
+    await _append_leaves(store, fingerprint, 3)
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        fetched = await client.get_checkpoint_at(fingerprint, 2)
+        assert fetched is not None
+
+        missing = await client.get_checkpoint_at(fingerprint, 99)
+        assert missing is None
+
+
+async def test_inclusion_proof_round_trip(store, running_server):
+    from tessera import log as log_mod, originstore as originstore_mod
+
+    fingerprint = "b3:" + "d" * 64
+    await _append_leaves(store, fingerprint, 5)
+
+    leaves = originstore_mod.read_log_leaves(store, fingerprint)
+    hashes = [log_mod.leaf_hash(leaf) for leaf in leaves]
+    root = log_mod.merkle_root(hashes)
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        response = await client.get_inclusion_proof(fingerprint, 5, 2)
+        assert response is not None
+        log_mod.verify_inclusion(hashes[2], 2, 5, root, response["proof"])  # must not raise
+
+
+async def test_inclusion_proof_404_for_out_of_range(store, running_server):
+    fingerprint = "b3:" + "d" * 64
+    await _append_leaves(store, fingerprint, 3)
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        missing = await client.get_inclusion_proof(fingerprint, 3, 5)
+        assert missing is None
+
+
+async def test_consistency_proof_round_trip(store, running_server):
+    from tessera import log as log_mod, originstore as originstore_mod
+
+    fingerprint = "b3:" + "d" * 64
+    await _append_leaves(store, fingerprint, 6)
+
+    leaves = originstore_mod.read_log_leaves(store, fingerprint)
+    hashes = [log_mod.leaf_hash(leaf) for leaf in leaves]
+    old_root = log_mod.merkle_root(hashes[:3])
+    new_root = log_mod.merkle_root(hashes[:6])
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        response = await client.get_consistency_proof(fingerprint, 3, 6)
+        assert response is not None
+        log_mod.verify_consistency(3, old_root, 6, new_root, response["proof"])  # must not raise
+
+
+async def test_log_routes_reject_unsafe_publisher_component(store, running_server):
+    status = await _raw_get_status(running_server, "/v1/%2e%2e/log/checkpoint")
+    assert status == 400

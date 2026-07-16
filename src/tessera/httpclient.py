@@ -83,6 +83,23 @@ class OriginClient:
     async def get_chunk(self, digest: str) -> bytes | None:
         return await self._get_bytes(f"/v1/chunk/{digest}", MAX_CHUNK_BYTES)
 
+    async def get_checkpoint(self, publisher: str) -> dict | None:
+        return await self._get_json(f"/v1/{publisher}/log/checkpoint", MAX_METADATA_BYTES)
+
+    async def get_checkpoint_at(self, publisher: str, tree_size: int) -> dict | None:
+        return await self._get_json(f"/v1/{publisher}/log/checkpoint/{tree_size}", MAX_METADATA_BYTES)
+
+    async def get_inclusion_proof(self, publisher: str, tree_size: int, leaf_index: int) -> dict | None:
+        return await self._get_json(
+            f"/v1/{publisher}/log/proof/inclusion/{tree_size}/{leaf_index}", MAX_METADATA_BYTES
+        )
+
+    async def get_consistency_proof(self, publisher: str, old_size: int, new_size: int) -> dict | None:
+        # A consistency proof scales with the tree, like a snapshot -- same larger cap.
+        return await self._get_json(
+            f"/v1/{publisher}/log/proof/consistency/{old_size}/{new_size}", MAX_SNAPSHOT_BYTES
+        )
+
     async def _read_bounded(self, resp: aiohttp.ClientResponse, path: str, max_bytes: int) -> bytes:
         buf = bytearray()
         async for piece in resp.content.iter_chunked(_READ_CHUNK_SIZE):

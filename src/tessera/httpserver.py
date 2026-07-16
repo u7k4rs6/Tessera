@@ -17,6 +17,16 @@ envelope like the root document; the snapshot route serves RAW bytes via
 computed over its exact wire bytes (Decision D6, no signature of its own),
 so re-serializing through aiohttp's JSON encoder would silently break
 every snapshot fetch.
+
+The M3 transparency-log routes (`log/checkpoint`, `log/checkpoint/{n}`,
+`log/proof/inclusion/{n}/{i}`, `log/proof/consistency/{old}/{new}`) serve
+PRECOMPUTED proofs, not raw leaves for client-side tree rebuilding (D7:
+the client verifies a proof, it doesn't reconstruct the Merkle tree
+itself). Inclusion/consistency proof responses carry only `{"proof": [...]}`
+-- deliberately not the leaf hash itself, since the client always
+recomputes that independently from data it already trusts (the manifest
+digest, log_index, and publisher it already has) rather than trusting
+anything the server reports about what a leaf "is".
 """
 
 from __future__ import annotations
@@ -26,6 +36,8 @@ from pathlib import Path
 from aiohttp import web
 
 from . import cas, originstore
+from . import log as log_mod
+from .errors import LogFailureError
 from .hashing import is_valid_digest
 
 STORE_KEY = web.AppKey("store", Path)
@@ -51,6 +63,10 @@ def build_app(store: Path) -> web.Application:
             web.get("/v1/{publisher}/meta/snapshot/{digest}", handle_snapshot),
             web.get("/v1/manifest/{digest}", handle_manifest),
             web.get("/v1/chunk/{digest}", handle_chunk),
+            web.get("/v1/{publisher}/log/checkpoint", handle_log_checkpoint),
+            web.get("/v1/{publisher}/log/checkpoint/{tree_size}", handle_log_checkpoint_at),
+            web.get("/v1/{publisher}/log/proof/inclusion/{tree_size}/{leaf_index}", handle_log_inclusion_proof),
+            web.get("/v1/{publisher}/log/proof/consistency/{old_size}/{new_size}", handle_log_consistency_proof),
         ]
     )
     return app
@@ -116,3 +132,70 @@ async def handle_snapshot(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="snapshot not found")
     # Raw bytes, NOT web.json_response -- see module docstring.
     return web.Response(body=data, content_type="application/json")
+
+
+async def handle_log_checkpoint(request: web.Request) -> web.Response:
+    publisher = request.match_info["publisher"]
+    _validate_component(publisher)
+
+    store: Path = request.app[STORE_KEY]
+    envelope = originstore.read_checkpoint(store, publisher)
+    if envelope is None:
+        raise web.HTTPNotFound(text="checkpoint not found")
+    return web.json_response(envelope)
+
+
+async def handle_log_checkpoint_at(request: web.Request) -> web.Response:
+    publisher = request.match_info["publisher"]
+    _validate_component(publisher)
+    try:
+        tree_size = int(request.match_info["tree_size"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="invalid tree size")
+
+    store: Path = request.app[STORE_KEY]
+    envelope = originstore.read_checkpoint_at(store, publisher, tree_size)
+    if envelope is None:
+        raise web.HTTPNotFound(text="checkpoint not found at that tree size")
+    return web.json_response(envelope)
+
+
+async def handle_log_inclusion_proof(request: web.Request) -> web.Response:
+    publisher = request.match_info["publisher"]
+    _validate_component(publisher)
+    try:
+        tree_size = int(request.match_info["tree_size"])
+        leaf_index = int(request.match_info["leaf_index"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="invalid tree size or leaf index")
+
+    store: Path = request.app[STORE_KEY]
+    leaves = originstore.read_log_leaves(store, publisher)
+    if not (0 <= tree_size <= len(leaves)) or not (0 <= leaf_index < tree_size):
+        raise web.HTTPNotFound(text="leaf or tree size not found")
+
+    hashes = [log_mod.leaf_hash(leaf) for leaf in leaves[:tree_size]]
+    try:
+        proof = log_mod.inclusion_proof(hashes, leaf_index)
+    except LogFailureError:
+        raise web.HTTPBadRequest(text="could not compute inclusion proof")
+    return web.json_response({"proof": proof})
+
+
+async def handle_log_consistency_proof(request: web.Request) -> web.Response:
+    publisher = request.match_info["publisher"]
+    _validate_component(publisher)
+    try:
+        old_size = int(request.match_info["old_size"])
+        new_size = int(request.match_info["new_size"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="invalid tree sizes")
+
+    store: Path = request.app[STORE_KEY]
+    leaves = originstore.read_log_leaves(store, publisher)
+    hashes = [log_mod.leaf_hash(leaf) for leaf in leaves]
+    try:
+        proof = log_mod.consistency_proof(hashes, old_size, new_size)
+    except LogFailureError:
+        raise web.HTTPBadRequest(text="could not compute consistency proof")
+    return web.json_response({"proof": proof})
