@@ -17,6 +17,7 @@ share no code, only the number that flows from one into the other via
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from .errors import LogFailureError, PinMismatchError, RollbackError
@@ -44,6 +45,24 @@ def state_path(home: Path, name: str) -> Path:
 
 
 def add_pin(home: Path, name: str, fingerprint: str, mirrors: list[str] | None = None) -> dict:
+    """Pin NAME to FINGERPRINT. If NAME was already pinned to a DIFFERENT
+    fingerprint, this is re-pinning to a new identity -- the documented
+    recovery from root key compromise (03_SECURITY_AND_ACCESS.md section
+    5.6: "publish a new fingerprint... and ask consumers to re-pin").
+    `state.json`'s rollback/equivocation high-water marks and the cached
+    root/manifest envelopes are all keyed by NAME, not by fingerprint, so
+    without clearing them here a re-pin would silently carry the OLD
+    identity's high-water marks over and compare them against the NEW,
+    unrelated publisher's genuinely fresh state -- a real bug caught while
+    writing the M4 root-key-compromise drill: re-pinning to a brand-new
+    publisher produced a false "equivocation" at the new publisher's own
+    first-ever timestamp, because its seq happened to coincide with the
+    old publisher's already-seen seq.
+    """
+    existing_path = pin_path(home, name)
+    if existing_path.exists() and read_json(existing_path).get("fingerprint") != fingerprint:
+        _clear_pin_state(home, name)
+
     doc = {
         "tessera": "pin/v1",
         "name": name,
@@ -52,6 +71,14 @@ def add_pin(home: Path, name: str, fingerprint: str, mirrors: list[str] | None =
     }
     atomic_write_json(pin_path(home, name), doc)
     return doc
+
+
+def _clear_pin_state(home: Path, name: str) -> None:
+    state_path(home, name).unlink(missing_ok=True)
+    root_cache_path(home, name).unlink(missing_ok=True)
+    manifests_dir = pin_dir(home, name) / "manifests"
+    if manifests_dir.is_dir():
+        shutil.rmtree(manifests_dir)
 
 
 def load_pin(home: Path, name: str) -> dict:

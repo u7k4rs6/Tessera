@@ -102,3 +102,39 @@ def test_log_checkpoint_hwm_defaults_to_none_and_advances(home):
 
     trust_store.advance_log_checkpoint(home, "acme-lab", 8, "b3:" + "b" * 64)
     assert trust_store.get_log_checkpoint_hwm(home, "acme-lab") == {"tree_size": 8, "root_hash": "b3:" + "b" * 64}
+
+
+def test_repinning_to_a_new_fingerprint_clears_old_identitys_state(home):
+    # M4: root-key-compromise recovery re-pins an existing local alias to a
+    # brand-new, unrelated fingerprint. Without clearing state.json (keyed
+    # by NAME, not fingerprint), the old identity's high-water marks would
+    # be silently compared against the new publisher's own genuinely fresh
+    # state -- e.g. a false equivocation at the new publisher's first-ever
+    # timestamp, if its seq happens to coincide with the old one already seen.
+    trust_store.add_pin(home, "acme-lab", "b3:" + "a" * 64)
+    trust_store.check_and_advance_root_version(home, "acme-lab", 3)
+    trust_store.check_and_advance_manifest_seq(home, "acme-lab", "bert-tiny", 7)
+    envelope = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope)
+    trust_store.advance_log_checkpoint(home, "acme-lab", 5, "b3:" + "c" * 64)
+    trust_store.cache_root_envelope(home, "acme-lab", {"payloadType": "t", "payload": "cGF5bG9hZA==", "signatures": []})
+
+    trust_store.add_pin(home, "acme-lab", "b3:" + "b" * 64)
+
+    assert trust_store.get_root_version_hwm(home, "acme-lab") == 0
+    assert trust_store.get_manifest_seq_hwm(home, "acme-lab", "bert-tiny") == 0
+    assert trust_store.get_timestamp_seq_hwm(home, "acme-lab") == 0
+    assert trust_store.get_log_checkpoint_hwm(home, "acme-lab") is None
+    assert trust_store.load_cached_root_envelope(home, "acme-lab") is None
+    # A re-issued statement at the SAME seq the old identity had already
+    # reached no longer looks like equivocation against the new pin.
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope)
+
+
+def test_repinning_to_the_same_fingerprint_preserves_state(home):
+    trust_store.add_pin(home, "acme-lab", "b3:" + "a" * 64)
+    trust_store.check_and_advance_root_version(home, "acme-lab", 3)
+
+    trust_store.add_pin(home, "acme-lab", "b3:" + "a" * 64, mirrors=["https://new-mirror.example.org"])
+
+    assert trust_store.get_root_version_hwm(home, "acme-lab") == 3
