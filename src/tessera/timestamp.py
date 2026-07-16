@@ -54,15 +54,22 @@ def sign_timestamp(statement: dict, private_key: Ed25519PrivateKey, key_id: str)
     return dsse.sign(canonicalize(statement), private_key, key_id)
 
 
-def verify_timestamp_envelope(envelope: dict, *, authorized_keys: dict[str, bytes], publisher: str) -> dict:
+def verify_timestamp_envelope(
+    envelope: dict,
+    *,
+    authorized_keys: dict[str, bytes],
+    publisher: str,
+    revoked_keys: frozenset[str] = frozenset(),
+) -> dict:
     """Crypto + expiry only (V4's non-hwm half). Returns the verified statement.
 
     Fail: SignatureError(41) for a bad/unauthorized signature, non-canonical
     payload, publisher mismatch, or `issued` too far in the future (the
     clock-policy rule from section 6). StaleError(30) if `expires` has
-    lapsed beyond the skew allowance.
+    lapsed beyond the skew allowance. KeyRevokedError(42, M3) if the only
+    otherwise-valid signature was from a revoked timestamp key.
     """
-    payload = dsse.verify(envelope, authorized_keys)
+    payload = dsse.verify(envelope, authorized_keys, revoked_keys=revoked_keys)
 
     try:
         parsed = json.loads(payload)

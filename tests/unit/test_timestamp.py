@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tessera.errors import SignatureError, StaleError
+from tessera.errors import KeyRevokedError, SignatureError, StaleError
 from tessera.keys import key_id, public_bytes
 from tessera.timeutil import format_iso8601, utc_now
 from tessera.timestamp import build_timestamp_statement, sign_timestamp, verify_timestamp_envelope
@@ -69,4 +69,23 @@ def test_tolerates_expiry_within_skew_window():
     issued = format_iso8601(utc_now() - timedelta(hours=24, minutes=5))
     stmt, envelope, kid, pub = _fixture(issued=issued, ttl=timedelta(hours=24))
     verified = verify_timestamp_envelope(envelope, authorized_keys={kid: pub}, publisher=stmt["publisher"])
+    assert verified == stmt
+
+
+def test_rejects_revoked_timestamp_key():
+    stmt, envelope, kid, pub = _fixture()
+    with pytest.raises(KeyRevokedError):
+        verify_timestamp_envelope(
+            envelope, authorized_keys={kid: pub}, publisher=stmt["publisher"], revoked_keys=frozenset({kid})
+        )
+
+
+def test_accepts_when_a_different_key_is_revoked():
+    stmt, envelope, kid, pub = _fixture()
+    verified = verify_timestamp_envelope(
+        envelope,
+        authorized_keys={kid: pub},
+        publisher=stmt["publisher"],
+        revoked_keys=frozenset({"b3:" + "9" * 64}),
+    )
     assert verified == stmt

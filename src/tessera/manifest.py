@@ -6,7 +6,9 @@ check V6 from 03_SECURITY_AND_ACCESS.md section 6: signature under an
 authorized key, canonical-form payload, digest match, embedded
 publisher/name/version match against what was requested (so a compromised
 resolution step can never remap a reference to a different, legitimately
-signed manifest), and, from M2, a per-artifact rollback high-water mark.
+signed manifest), a per-artifact rollback high-water mark (M2), and key
+revocation (M3, D13: a revoked key's signature is rejected everywhere,
+including on manifests that would otherwise verify).
 """
 
 from __future__ import annotations
@@ -117,13 +119,16 @@ def verify_manifest_envelope(
     name: str,
     version: str,
     min_seq: int = 0,
+    revoked_keys: frozenset[str] = frozenset(),
 ) -> dict:
     """Implements V6, including (from M2) the per-artifact rollback
     sub-check: a manifest whose `seq` is below `min_seq`, the consumer's
-    persisted high-water mark for this artifact, is rejected. Returns the
-    verified manifest dict on success.
+    persisted high-water mark for this artifact, is rejected, and (from
+    M3) revocation: a signature from a key in `revoked_keys` is rejected
+    even if otherwise cryptographically valid (D13, fail closed). Returns
+    the verified manifest dict on success.
     """
-    payload = dsse.verify(envelope, authorized_keys)
+    payload = dsse.verify(envelope, authorized_keys, revoked_keys=revoked_keys)
 
     try:
         parsed = json.loads(payload)

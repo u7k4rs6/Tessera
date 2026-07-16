@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from tessera import store
 from tessera.chunking import CHUNK_SIZE, compute_file_digest
-from tessera.errors import DigestMismatchError, InternalError, RollbackError, SignatureError
+from tessera.errors import DigestMismatchError, InternalError, KeyRevokedError, RollbackError, SignatureError
 from tessera.hashing import b3_hex
 from tessera.keys import key_id, public_bytes
 from tessera.manifest import (
@@ -197,3 +197,34 @@ def test_verify_manifest_rejects_seq_below_min_seq(tmp_path, home):
             version=m["version"],
             min_seq=3,
         )
+
+
+def test_verify_manifest_rejects_revoked_release_key(tmp_path, home):
+    # T4C: a manifest that would otherwise verify fine is rejected once its
+    # signer is in the revoked-key set -- no time-based carve-out (D13).
+    m, envelope, digest, authorized = _signed_fixture(tmp_path, home)
+    release_kid = next(iter(authorized))
+    with pytest.raises(KeyRevokedError):
+        verify_manifest_envelope(
+            envelope,
+            authorized_keys=authorized,
+            expected_digest=digest,
+            publisher=m["publisher"],
+            name=m["name"],
+            version=m["version"],
+            revoked_keys=frozenset({release_kid}),
+        )
+
+
+def test_verify_manifest_accepts_when_a_different_key_is_revoked(tmp_path, home):
+    m, envelope, digest, authorized = _signed_fixture(tmp_path, home)
+    verified = verify_manifest_envelope(
+        envelope,
+        authorized_keys=authorized,
+        expected_digest=digest,
+        publisher=m["publisher"],
+        name=m["name"],
+        version=m["version"],
+        revoked_keys=frozenset({"b3:" + "9" * 64}),
+    )
+    assert verified == m
