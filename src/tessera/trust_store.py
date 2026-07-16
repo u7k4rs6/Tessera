@@ -26,6 +26,10 @@ def root_cache_path(home: Path, name: str) -> Path:
     return pin_dir(home, name) / "root.json"
 
 
+def manifest_cache_path(home: Path, name: str, artifact: str, version: str) -> Path:
+    return pin_dir(home, name) / "manifests" / artifact / f"{version}.json"
+
+
 def add_pin(home: Path, name: str, fingerprint: str, mirrors: list[str] | None = None) -> dict:
     doc = {
         "tessera": "pin/v1",
@@ -54,6 +58,22 @@ def cache_root_envelope(home: Path, name: str, envelope: dict) -> None:
 
 def load_cached_root_envelope(home: Path, name: str) -> dict | None:
     path = root_cache_path(home, name)
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def cache_manifest(home: Path, name: str, artifact: str, version: str, digest: str, envelope: dict) -> None:
+    """Cache a verified manifest envelope alongside the digest it was
+    resolved to, so `verify` can run offline for a reference already
+    fetched once (V6's digest check has nothing else to check the payload
+    against otherwise).
+    """
+    atomic_write_json(manifest_cache_path(home, name, artifact, version), {"digest": digest, "envelope": envelope})
+
+
+def load_cached_manifest(home: Path, name: str, artifact: str, version: str) -> dict | None:
+    path = manifest_cache_path(home, name, artifact, version)
     if not path.exists():
         return None
     return read_json(path)
