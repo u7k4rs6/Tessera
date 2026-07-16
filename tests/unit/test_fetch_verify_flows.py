@@ -56,8 +56,8 @@ def published_artifact(tmp_path, origin_store):
     timestamp_kid = key_id(timestamp_pub)
 
     root_doc = build_root_doc(
-        root_key_id=root_kid,
-        root_pub=root_pub,
+        publisher=root_kid,
+        root_keys=[(root_kid, root_pub)],
         release_keys=[(release_kid, release_pub)],
         timestamp_keys=[(timestamp_kid, timestamp_pub)],
     )

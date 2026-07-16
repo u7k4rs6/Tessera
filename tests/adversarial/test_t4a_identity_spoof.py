@@ -53,7 +53,7 @@ async def test_t4a_lookalike_key_rejected_by_pin_before_signature_check(
     impostor_sk = Ed25519PrivateKey.generate()
     impostor_pub = public_bytes(impostor_sk.public_key())
     impostor_kid = key_id(impostor_pub)
-    impostor_doc = build_root_doc(root_key_id=impostor_kid, root_pub=impostor_pub)
+    impostor_doc = build_root_doc(publisher=impostor_kid, root_keys=[(impostor_kid, impostor_pub)])
     impostor_envelope = sign_root_doc(impostor_doc, impostor_sk, impostor_kid)
     originstore.write_root_doc(origin_store, published_artifact["fingerprint"], 1, impostor_envelope)
 

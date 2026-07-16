@@ -38,7 +38,7 @@ def publisher_init(name: str, root_key_path: Path, store: Path, passphrase_fd: i
         raise click.ClickException(f"{root_key_path} is a {loaded.role} key, not a root key")
 
     pub = keys.public_bytes(loaded.public_key)
-    doc = root.build_root_doc(root_key_id=loaded.key_id, root_pub=pub)
+    doc = root.build_root_doc(publisher=loaded.key_id, root_keys=[(loaded.key_id, pub)])
     envelope = root.sign_root_doc(doc, loaded.private_key, loaded.key_id)
 
     ensure_layout(store)

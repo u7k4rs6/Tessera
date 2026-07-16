@@ -69,7 +69,7 @@ async def test_root_round_trip_and_404(store, running_server):
     sk = Ed25519PrivateKey.generate()
     pub = public_bytes(sk.public_key())
     kid = key_id(pub)
-    doc = build_root_doc(root_key_id=kid, root_pub=pub)
+    doc = build_root_doc(publisher=kid, root_keys=[(kid, pub)])
     envelope = sign_root_doc(doc, sk, kid)
     originstore.write_root_doc(store, kid, 1, envelope)
 
