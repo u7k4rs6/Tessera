@@ -13,6 +13,8 @@ import click
 _LABELS = {
     "V1": "pin",
     "V2": "root",
+    "V4": "timestamp",
+    "V5": "snapshot",
     "V6": "manifest",
     "V8": "chunks",
     "V9": "assembly",
@@ -22,9 +24,12 @@ _REMEDIES = {
     2: "check command usage (tessera COMMAND --help)",
     20: "check network connectivity / mirror availability, or add another mirror",
     21: "check the artifact name/version; nothing published under that reference",
+    30: "add an independent mirror; the publisher may have stopped reissuing timestamps, or peers are withholding",
+    31: "none on the consumer side; this is a legitimate rollback rejection -- report the offending mirror",
     40: "add an honest mirror (tessera trust add ... --mirror URL) or retry later",
     41: "none on the consumer side; the publisher must re-sign or investigate",
     43: 'obtain the fingerprint from an out-of-band channel, then\n           tessera trust add NAME <fingerprint>',
+    44: "equivocation detected; do not trust either statement, report the offending mirror",
     70: "internal error; please file a bug report",
 }
 

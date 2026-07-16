@@ -11,6 +11,7 @@ import click
 
 from .fetch import fetch_command
 from .keygen import keygen_command
+from .mirror import mirror_group
 from .origin import origin_group
 from .publish import publish_command
 from .publisher import publisher_group
@@ -33,6 +34,7 @@ main.add_command(keygen_command)
 main.add_command(publisher_group)
 main.add_command(publish_command)
 main.add_command(origin_group)
+main.add_command(mirror_group)
 main.add_command(trust_group)
 main.add_command(fetch_command)
 main.add_command(verify_command)
