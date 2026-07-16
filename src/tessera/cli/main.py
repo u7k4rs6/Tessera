@@ -1,8 +1,8 @@
 """The `tessera` CLI entry point, per 04_FRONTEND_SPEC.md section 3.
 
-Verified by default, and only: there is no `--no-verify` flag, environment
-variable, or config key anywhere in this codebase that yields an unverified
-artifact.
+Verified by default, and only: no flag, environment variable, or config
+key anywhere in this codebase disables a verification check or yields an
+artifact that skipped one.
 """
 
 from __future__ import annotations
