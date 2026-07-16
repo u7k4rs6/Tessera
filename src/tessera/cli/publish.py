@@ -16,20 +16,7 @@ import click
 
 from .. import keys, manifest as manifest_mod, originstore
 from ..store import ensure_layout
-
-
-def _find_sole_publisher(store: Path) -> str:
-    publisher_dir = store / "publisher"
-    if not publisher_dir.is_dir():
-        raise click.ClickException(f"{store}: no publisher initialized here; run `publisher init` first")
-    candidates = [p.name for p in publisher_dir.iterdir() if p.is_dir()]
-    if len(candidates) == 0:
-        raise click.ClickException(f"{store}: no publisher initialized here; run `publisher init` first")
-    if len(candidates) > 1:
-        raise click.ClickException(
-            f"{store}: multiple publishers present ({', '.join(candidates)}); M1 supports one publisher per store"
-        )
-    return candidates[0]
+from ._common import find_sole_publisher
 
 
 @click.command("publish")
@@ -56,7 +43,7 @@ def publish_command(
         raise click.ClickException(f"{release_key_path} is a {release_loaded.role} key, not a release key")
 
     ensure_layout(store)
-    fingerprint = _find_sole_publisher(store)
+    fingerprint = find_sole_publisher(store)
     seq = originstore.next_seq(store, fingerprint, name)
 
     click.echo(f"hashing files under {source_dir} ...")
