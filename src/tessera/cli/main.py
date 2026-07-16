@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import click
 
+from .diff import diff_command
 from .fetch import fetch_command
 from .keygen import keygen_command
+from .log import log_group
 from .mirror import mirror_group
 from .origin import origin_group
+from .provenance import provenance_command
 from .publish import publish_command
 from .publisher import publisher_group
+from .revoke import revoke_command
+from .rotate import rotate_command
+from .status import status_command
 from .trust import trust_group
 from .verify import verify_command
 
@@ -38,6 +44,12 @@ main.add_command(mirror_group)
 main.add_command(trust_group)
 main.add_command(fetch_command)
 main.add_command(verify_command)
+main.add_command(rotate_command)
+main.add_command(revoke_command)
+main.add_command(log_group)
+main.add_command(provenance_command)
+main.add_command(diff_command)
+main.add_command(status_command)
 
 
 if __name__ == "__main__":

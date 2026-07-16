@@ -32,9 +32,19 @@ from ._common import decode_envelope_payload, decode_key_entries, find_sole_publ
 @click.option("--new-root-key", "new_root_key_path", type=click.Path(exists=True, path_type=Path), required=True, help="New root private key")
 @click.option("--threshold", "threshold_root", type=int, default=1, help="New root's own signature threshold")
 @click.option("--out", type=click.Path(path_type=Path), required=True, help="Where to write the prepared, signed root document")
-@click.option("--passphrase-fd", type=int, default=None, help="Passphrase fd for --root-key; --new-root-key is always prompted separately")
+@click.option("--passphrase-fd", type=int, default=None, help="Passphrase fd for --root-key")
+@click.option(
+    "--new-root-passphrase-fd", type=int, default=None,
+    help="Passphrase fd for --new-root-key; prompted interactively if omitted",
+)
 def rotate_command(
-    store: Path, root_key_path: Path, new_root_key_path: Path, threshold_root: int, out: Path, passphrase_fd: int | None
+    store: Path,
+    root_key_path: Path,
+    new_root_key_path: Path,
+    threshold_root: int,
+    out: Path,
+    passphrase_fd: int | None,
+    new_root_passphrase_fd: int | None,
 ) -> None:
     """Prepare a new root version rotating to a new root key, cross-signed
     by both the current and new root keys."""
@@ -43,7 +53,7 @@ def rotate_command(
     if old_loaded.role != "root":
         raise click.ClickException(f"{root_key_path} is a {old_loaded.role} key, not a root key")
 
-    new_passphrase = keys.read_passphrase(None)
+    new_passphrase = keys.read_passphrase(new_root_passphrase_fd)
     new_loaded = keys.load_encrypted_key(new_root_key_path, new_passphrase)
     if new_loaded.role != "root":
         raise click.ClickException(f"{new_root_key_path} is a {new_loaded.role} key, not a root key")

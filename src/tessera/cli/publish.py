@@ -166,4 +166,10 @@ def _resign_all(store: Path, fingerprint: str, release_loaded) -> None:
             # object with a freshly-signed envelope.
             originstore.write_manifest_envelope(store, pointer["digest"], new_envelope)
             count += 1
-    click.echo(f"re-signed {count} manifest(s) with release key {release_loaded.key_id}")
+
+    # The transparency-log checkpoint is also release-key-signed: if it was
+    # last signed by the very key being revoked, V7 would otherwise stay
+    # broken for every consumer until some unrelated future log event.
+    originstore.resign_checkpoint(store, fingerprint, release_private_key=release_loaded.private_key, release_key_id=release_loaded.key_id)
+
+    click.echo(f"re-signed {count} manifest(s) and the log checkpoint with release key {release_loaded.key_id}")

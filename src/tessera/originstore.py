@@ -42,6 +42,8 @@ way it walks chunks.
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 from . import log as log_mod
@@ -258,3 +260,23 @@ def append_log_leaf(
         atomic_write_json(checkpoint_history_path(store, fingerprint, tree_size), checkpoint_envelope)
 
     return new_index, checkpoint_envelope
+
+
+def resign_checkpoint(store: Path, fingerprint: str, *, release_private_key, release_key_id: str) -> dict:
+    """Re-sign the CURRENT checkpoint with a new release key, same
+    tree_size/root_hash -- no new leaf. Used by `publish --resign-all`:
+    without this, a checkpoint signed by a since-revoked release key would
+    permanently strand V7 for every consumer until some unrelated future
+    publish/rotate/revoke happened to refresh it, defeating the whole
+    point of `--resign-all` as a recovery path.
+    """
+    leaves_path = log_leaves_path(store, fingerprint)
+    with locked(leaves_path):
+        current = read_checkpoint(store, fingerprint)
+        if current is None:
+            raise InternalError(f"no checkpoint to re-sign for {fingerprint}")
+        payload = json.loads(base64.b64decode(current["payload"], validate=True))
+        checkpoint_envelope = log_mod.sign_checkpoint(payload, release_private_key, release_key_id)
+        atomic_write_json(checkpoint_path(store, fingerprint), checkpoint_envelope)
+        atomic_write_json(checkpoint_history_path(store, fingerprint, payload["tree_size"]), checkpoint_envelope)
+    return checkpoint_envelope

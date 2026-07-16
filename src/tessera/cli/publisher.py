@@ -20,7 +20,7 @@ from .. import keys, originstore, root
 from ..canonical import canonicalize
 from ..hashing import b3_hex
 from ..store import ensure_layout
-from ._common import decode_envelope_payload
+from ._common import decode_envelope_payload, find_sole_publisher, latest_root_version
 
 
 @click.group("publisher")
@@ -58,7 +58,15 @@ def publisher_init(name: str, root_key_path: Path, store: Path, passphrase_fd: i
 @click.option("--store", type=click.Path(path_type=Path), required=True)
 @click.option("--passphrase-fd", type=int, default=None)
 def publisher_delegate(role: str, pub_key_path: Path, root_key_path: Path, store: Path, passphrase_fd: int | None) -> None:
-    """Add a release or timestamp key to the root document."""
+    """Add a release or timestamp key to the root document. Works against
+    whichever root version is currently latest -- including after a
+    rotation (M3), when the publisher's permanent identity (the fingerprint
+    everything is stored under) and the CURRENT root key's own id are no
+    longer the same value. Bumps the root version; since delegation never
+    touches `keys.root` itself, the same current root key's single
+    signature satisfies both the previous and the new version's threshold
+    (same reasoning as `revoke`), so no cross-signing ceremony is needed.
+    """
     passphrase = keys.read_passphrase(passphrase_fd)
     root_loaded = keys.load_encrypted_key(root_key_path, passphrase)
     if root_loaded.role != "root":
@@ -68,17 +76,23 @@ def publisher_delegate(role: str, pub_key_path: Path, root_key_path: Path, store
     if pubfile_role != role:
         raise click.ClickException(f"{pub_key_path} is a {pubfile_role} key, not {role!r}")
 
-    existing_envelope = originstore.read_root_doc(store, root_loaded.key_id, 1)
-    if existing_envelope is None:
-        raise click.ClickException(f"no root document for {root_loaded.key_id} at {store}; run `publisher init` first")
+    fingerprint = find_sole_publisher(store)
+    current_version = latest_root_version(store, fingerprint)
+    existing_envelope = originstore.read_root_doc(store, fingerprint, current_version)
+    doc = decode_envelope_payload(existing_envelope)
 
-    doc = json.loads(base64.b64decode(existing_envelope["payload"], validate=True))
+    if root_loaded.key_id not in {k["id"] for k in doc.get("keys", {}).get("root", [])}:
+        raise click.ClickException(f"{root_key_path} is not among the current root keys for {fingerprint}")
+
+    doc = dict(doc)
+    doc["keys"] = dict(doc["keys"])
     doc["keys"][role] = [{"id": delegated_kid, "pub": base64.b64encode(delegated_pub).decode("ascii")}]
+    doc["root_version"] = current_version + 1
 
     new_envelope = root.sign_root_doc(doc, root_loaded.private_key, root_loaded.key_id)
-    originstore.write_root_doc(store, root_loaded.key_id, 1, new_envelope)
+    originstore.write_root_doc(store, fingerprint, current_version + 1, new_envelope)
 
-    click.echo(f"delegated {role} key {delegated_kid}")
+    click.echo(f"delegated {role} key {delegated_kid} (root v{current_version + 1})")
 
 
 @publisher_group.command("import-root")

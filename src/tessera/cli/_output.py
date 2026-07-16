@@ -16,8 +16,10 @@ _LABELS = {
     "V4": "timestamp",
     "V5": "snapshot",
     "V6": "manifest",
+    "V7": "log",
     "V8": "chunks",
     "V9": "assembly",
+    "V10": "provenance",
 }
 
 _REMEDIES = {
@@ -28,8 +30,10 @@ _REMEDIES = {
     31: "none on the consumer side; this is a legitimate rollback rejection -- report the offending mirror",
     40: "add an honest mirror (tessera trust add ... --mirror URL) or retry later",
     41: "none on the consumer side; the publisher must re-sign or investigate",
+    42: "the signing key was revoked; wait for the publisher to re-sign with a new key (tessera publish --resign-all)",
     43: 'obtain the fingerprint from an out-of-band channel, then\n           tessera trust add NAME <fingerprint>',
-    44: "equivocation detected; do not trust either statement, report the offending mirror",
+    44: "equivocation or a broken transparency-log proof detected; do not trust either statement, report the offending mirror",
+    45: "the provenance attestation is invalid or doesn't match this manifest; report the offending mirror or publisher",
     70: "internal error; please file a bug report",
 }
 
