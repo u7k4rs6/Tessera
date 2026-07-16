@@ -66,3 +66,60 @@ this milestone. New decisions get appended here as the project grows.
   it points to is independently verified (V6) regardless of what this
   bridge returns, so a wrong or malicious value here can only cause a
   failed fetch, never an accepted bad artifact.
+
+## M2-specific decisions
+
+- **D17** The snapshot keeps every published version (`versions: {version:
+  {...}}` plus a `current_version` pointer), not just the current one.
+  V6's own spec text says the snapshot "maps name@version to a manifest
+  digest" -- not "name to its current version" -- and M1 already supported
+  fetching any historical version by exact ref; dropping that would be a
+  silent regression. `originstore`'s existing `current/<artifact>/<version>`
+  bookkeeping already holds exactly this data, so `origin
+  reissue-timestamp` just enumerates it.
+- **D18** The M1 `/current` bridge is removed outright (route, `resolve.py`,
+  `OriginClient.get_current`), not kept as a fallback. It carried zero
+  trust weight even in M1 (D16), there are no external consumers pre-1.0
+  to stay compatible with, and a dead trust-adjacent HTTP endpoint is a
+  liability (attack surface, a foot-gun if something is ever miswired back
+  to it) rather than a convenience.
+- **D19** Peer scores (`peers.py`) are clamped to `[-50, +20]`. Unbounded
+  scores make weighted-random selection degenerate at both ends -- an old,
+  very-good peer would be picked almost deterministically forever, and a
+  once-bad peer would need an implausibly long good streak to matter
+  again, defeating the "small exploration share so a formerly bad mirror
+  can rehabilitate" requirement (architecture doc section 6.2).
+- **D20** `verify` never enforces the rollback high-water marks `fetch`
+  does, and never advances the per-artifact manifest-seq hwm. `verify`
+  checks a specific, named reference against what the publisher signed for
+  it -- a legitimate thing to ask about an old version long after a newer
+  one exists (e.g. auditing an old backup). hwm enforcement is about
+  "give me the current, freshest artifact," which is `fetch`'s job. (The
+  timestamp hwm does still advance as a side effect of `verify`'s network-
+  fallback path, since that's about detecting a stale/equivocating
+  overall snapshot pointer, not about which artifact version is being
+  checked -- a different, orthogonal concern.)
+- **D21** Metadata resolution (V2 root, V4 timestamp, V5 snapshot, V6
+  manifest) falls back across every configured peer in score order
+  (`_try_each_peer` in `fetch_flow.py`) rather than pinning to one peer or
+  requiring all configured peers to agree. Each document is independently
+  verified regardless of which peer served it, so a bad, down, or
+  malicious-but-unsuccessful peer there only costs availability/score,
+  never correctness -- this is also what makes a T4A-shaped lookalike-root
+  attempt or a T2B-shaped stale-mirror attempt fail over to an honest peer
+  automatically when one is configured, rather than failing the whole
+  operation.
+- **D22** Timestamp reissue is a fully separate command
+  (`origin reissue-timestamp`), never folded into `publish`. Matches D5's
+  role-separation philosophy (release and timestamp keys are meant to live
+  on different hosts in a real deployment) and gives the TTL-driven
+  reissue cadence -- needed even with zero new publishes -- an obviously
+  correct home instead of being bolted onto an unrelated command.
+- **D23** `mirror sync`'s ingest checks are real where they can be
+  (chunk-by-digest via `cas.write_verified`, snapshot-bytes-by-digest) but
+  only shape/self-consistency checks for root/timestamp/manifest, since a
+  mirror holds no pin and therefore has no trusted key to verify a
+  signature against. This is by design, not a shortcut: per the PRD, a
+  mirror's ingest verification exists only to avoid caching obviously
+  corrupt garbage and is never trust-relevant to a downstream consumer,
+  who verifies everything itself, from a mirror or an origin, identically.
