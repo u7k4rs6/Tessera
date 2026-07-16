@@ -1,7 +1,7 @@
 import pytest
 
 from tessera import store, trust_store
-from tessera.errors import PinMismatchError
+from tessera.errors import LogFailureError, PinMismatchError, RollbackError
 
 
 @pytest.fixture
@@ -30,3 +30,47 @@ def test_root_envelope_cache_round_trip(home):
     envelope = {"payloadType": "t", "payload": "cGF5bG9hZA==", "signatures": []}
     trust_store.cache_root_envelope(home, "acme-lab", envelope)
     assert trust_store.load_cached_root_envelope(home, "acme-lab") == envelope
+
+
+def test_root_version_hwm_advances_and_rejects_rollback(home):
+    trust_store.check_and_advance_root_version(home, "acme-lab", 1)
+    trust_store.check_and_advance_root_version(home, "acme-lab", 1)  # equal is fine (idempotent)
+    trust_store.check_and_advance_root_version(home, "acme-lab", 3)  # advances
+
+    with pytest.raises(RollbackError):
+        trust_store.check_and_advance_root_version(home, "acme-lab", 2)
+
+
+def test_manifest_seq_hwm_is_per_artifact(home):
+    trust_store.check_and_advance_manifest_seq(home, "acme-lab", "bert-tiny", 5)
+    trust_store.check_and_advance_manifest_seq(home, "acme-lab", "sst5", 1)  # independent artifact
+
+    with pytest.raises(RollbackError):
+        trust_store.check_and_advance_manifest_seq(home, "acme-lab", "bert-tiny", 4)
+
+    # Unaffected artifact still accepts its own lower-than-bert-tiny seq.
+    trust_store.check_and_advance_manifest_seq(home, "acme-lab", "sst5", 2)
+
+
+def test_timestamp_seq_hwm_advances_and_rejects_rollback(home):
+    envelope_v1 = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope_v1)
+
+    with pytest.raises(RollbackError):
+        trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 0, {"payload": "zz", "signatures": []})
+
+
+def test_timestamp_seq_equal_and_identical_envelope_is_a_noop(home):
+    envelope = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope)
+    # Re-presenting the exact same statement at the same seq must not raise.
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, dict(envelope))
+
+
+def test_timestamp_seq_equal_but_different_envelope_is_equivocation(home):
+    envelope_a = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
+    envelope_b = {"payload": "bb", "signatures": [{"keyid": "k", "sig": "s2"}]}
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope_a)
+
+    with pytest.raises(LogFailureError):
+        trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope_b)

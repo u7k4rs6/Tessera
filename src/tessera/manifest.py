@@ -3,17 +3,16 @@ per 02_TECHNICAL_ARCHITECTURE.md section 3.3.
 
 This is the core M1 deliverable. `verify_manifest_envelope` implements
 check V6 from 03_SECURITY_AND_ACCESS.md section 6: signature under an
-authorized key, canonical-form payload, digest match, and embedded
-publisher/name/version match against what was requested -- so a compromised
+authorized key, canonical-form payload, digest match, embedded
+publisher/name/version match against what was requested (so a compromised
 resolution step can never remap a reference to a different, legitimately
-signed manifest.
+signed manifest), and, from M2, a per-artifact rollback high-water mark.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -21,14 +20,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from . import cas, dsse
 from .canonical import canonicalize
 from .chunking import CHUNK_SIZE, iter_chunks, compute_file_digest
-from .errors import DigestMismatchError, InternalError, SignatureError
+from .errors import DigestMismatchError, InternalError, RollbackError, SignatureError
 from .hashing import b3_hex
+from .timeutil import utc_now_iso
 
 MANIFEST_TYPE = "manifest/v1"
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _validate_relative_path(rel_posix: str) -> None:
@@ -95,7 +91,7 @@ def build_manifest(
         "version": version,
         "seq": seq,
         "type": artifact_type,
-        "created": created or _utc_now_iso(),
+        "created": created or utc_now_iso(),
         "files": file_entries,
         "total_size": total_size,
         "record_index": None,
@@ -120,8 +116,13 @@ def verify_manifest_envelope(
     publisher: str,
     name: str,
     version: str,
+    min_seq: int = 0,
 ) -> dict:
-    """Implements V6. Returns the verified manifest dict on success."""
+    """Implements V6, including (from M2) the per-artifact rollback
+    sub-check: a manifest whose `seq` is below `min_seq`, the consumer's
+    persisted high-water mark for this artifact, is rejected. Returns the
+    verified manifest dict on success.
+    """
     payload = dsse.verify(envelope, authorized_keys)
 
     try:
@@ -151,6 +152,14 @@ def verify_manifest_envelope(
     ):
         raise SignatureError(
             "manifest publisher/name/version does not match the requested reference"
+        )
+
+    seq = parsed.get("seq", 0)
+    if seq < min_seq:
+        raise RollbackError(
+            f"{name} seq {seq} is older than the previously seen seq {min_seq}",
+            seen=min_seq,
+            offered=seq,
         )
 
     return parsed

@@ -1,13 +1,14 @@
 """Root trust document, per 02_TECHNICAL_ARCHITECTURE.md section 4.1.
 
 A publisher's identity IS the fingerprint of its root public key
-(`publisher` field == the root key's `id`). M1 implements the degraded
-form of check V2 (03_SECURITY_AND_ACCESS.md section 6): a single root
-document, self-signed, checked against the locally pinned fingerprint and
-its own expiry. There is no version chain to walk yet (root rotation is
-M3) -- but the document shape already matches the full spec (`root_version`,
-`threshold`, `revoked`) so M3's chain-walking logic can extend this without
-a wire-format break.
+(`publisher` field == the root key's `id`). This module implements the
+degraded form of check V2 (03_SECURITY_AND_ACCESS.md section 6): a single
+root document, self-signed, checked against the locally pinned
+fingerprint, its own expiry, and (from M2) a rollback high-water mark.
+There is still no version chain to walk (root rotation is M3) -- but the
+document shape already matches the full spec (`root_version`, `threshold`,
+`revoked`) so M3's chain-walking logic can extend this without a
+wire-format break.
 
 The fingerprint comparison happens BEFORE any signature cryptography runs:
 a lookalike publisher signing with a different key is rejected by pin
@@ -26,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import dsse
 from .canonical import canonicalize
-from .errors import PinMismatchError, SignatureError
+from .errors import PinMismatchError, RollbackError, SignatureError
 from .timeutil import format_iso8601, is_expired, utc_now
 
 ROOT_TYPE = "root/v1"
@@ -76,8 +77,12 @@ def sign_root_doc(doc: dict, root_private_key: Ed25519PrivateKey, root_key_id: s
     return dsse.sign(canonicalize(doc), root_private_key, root_key_id)
 
 
-def verify_root_doc(envelope: dict, *, pinned_fingerprint: str) -> dict:
-    """Implements the M1-degraded V2 check. Returns the verified root document."""
+def verify_root_doc(envelope: dict, *, pinned_fingerprint: str, min_version: int = 0) -> dict:
+    """Implements the M2-degraded V2 check (still no chain walk -- that's
+    M3 -- but now includes the rollback sub-check: a root version older
+    than `min_version`, the consumer's persisted high-water mark, is
+    rejected). Returns the verified root document.
+    """
     if not isinstance(envelope, dict) or "payload" not in envelope:
         raise SignatureError("malformed root document envelope")
 
@@ -115,6 +120,14 @@ def verify_root_doc(envelope: dict, *, pinned_fingerprint: str) -> dict:
         raise SignatureError(f"root document has an unparseable expiry: {expires!r}") from e
     if expired:
         raise SignatureError(f"root document expired at {expires}")
+
+    root_version = parsed.get("root_version", 0)
+    if root_version < min_version:
+        raise RollbackError(
+            f"root version {root_version} is older than the previously seen version {min_version}",
+            seen=min_version,
+            offered=root_version,
+        )
 
     return parsed
 

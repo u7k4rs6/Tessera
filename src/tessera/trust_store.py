@@ -4,13 +4,22 @@ A human-friendly publisher name is a purely local alias for a pinned root
 key fingerprint, created by `trust add` -- exactly like an SSH
 `known_hosts` entry. There is no global naming authority; the pin is the
 trust bootstrap and this module is where it lives on disk.
+
+Also holds the consumer's rollback high-water marks (03_SECURITY_AND_ACCESS.md
+section 4.2, section 6 V2/V4/V6): the root document version, the timestamp
+seq (plus equivocation detection), and each artifact's manifest seq, all
+persisted per pinned publisher in `state.json`. This is the consumer's
+*acceptance floor* -- a separate concern from `originstore.next_seq`, which
+is the *publisher's* seq-assignment authority at publish time; the two
+share no code, only the number that flows from one into the other via
+`min_seq`/`min_version` parameters at verification time.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from .errors import PinMismatchError
+from .errors import LogFailureError, PinMismatchError, RollbackError
 from .store import atomic_write_json, read_json, trust_dir
 
 
@@ -28,6 +37,10 @@ def root_cache_path(home: Path, name: str) -> Path:
 
 def manifest_cache_path(home: Path, name: str, artifact: str, version: str) -> Path:
     return pin_dir(home, name) / "manifests" / artifact / f"{version}.json"
+
+
+def state_path(home: Path, name: str) -> Path:
+    return pin_dir(home, name) / "state.json"
 
 
 def add_pin(home: Path, name: str, fingerprint: str, mirrors: list[str] | None = None) -> dict:
@@ -77,3 +90,92 @@ def load_cached_manifest(home: Path, name: str, artifact: str, version: str) -> 
     if not path.exists():
         return None
     return read_json(path)
+
+
+def _empty_state() -> dict:
+    return {
+        "tessera": "trust-state/v1",
+        "root_version_hwm": 0,
+        "timestamp": {"seq_hwm": 0, "last_envelope": None},
+        "artifacts": {},
+    }
+
+
+def _load_state(home: Path, name: str) -> dict:
+    path = state_path(home, name)
+    if not path.exists():
+        return _empty_state()
+    return read_json(path)
+
+
+def _save_state(home: Path, name: str, state: dict) -> None:
+    atomic_write_json(state_path(home, name), state)
+
+
+def check_and_advance_root_version(home: Path, name: str, version: int) -> None:
+    """V2's rollback sub-check: a root document version older than one
+    already validated is rejected. Equal or newer versions advance (or
+    no-op) the stored high-water mark.
+    """
+    state = _load_state(home, name)
+    hwm = state["root_version_hwm"]
+    if version < hwm:
+        raise RollbackError(
+            f"root version {version} is older than the previously seen version {hwm}",
+            seen=hwm,
+            offered=version,
+        )
+    if version > hwm:
+        state["root_version_hwm"] = version
+        _save_state(home, name, state)
+
+
+def check_and_advance_manifest_seq(home: Path, name: str, artifact: str, seq: int) -> None:
+    """V6's rollback sub-check: a manifest whose seq is below the stored
+    per-artifact high-water mark is rejected.
+    """
+    state = _load_state(home, name)
+    artifact_state = state["artifacts"].setdefault(artifact, {"seq_hwm": 0})
+    hwm = artifact_state["seq_hwm"]
+    if seq < hwm:
+        raise RollbackError(
+            f"{artifact} seq {seq} is older than the previously seen seq {hwm}",
+            seen=hwm,
+            offered=seq,
+        )
+    if seq > hwm:
+        artifact_state["seq_hwm"] = seq
+        _save_state(home, name, state)
+
+
+def check_and_advance_timestamp_seq(home: Path, name: str, seq: int, envelope: dict) -> None:
+    """V4's rollback/equivocation sub-check. `seq` below the stored
+    high-water mark is rollback (31). `seq` equal to the high-water mark
+    requires the envelope to be byte-identical (as a structured value) to
+    the one already seen at that seq -- Ed25519 signing is deterministic,
+    so two honest issuances of the same statement produce identical
+    envelopes; a mismatch here means two different statements were issued
+    under the same seq, i.e. equivocation (44). `seq` above the high-water
+    mark advances it and remembers this envelope for future equality checks.
+    """
+    state = _load_state(home, name)
+    ts_state = state["timestamp"]
+    hwm = ts_state["seq_hwm"]
+
+    if seq < hwm:
+        raise RollbackError(
+            f"timestamp seq {seq} is older than the previously seen seq {hwm}",
+            seen=hwm,
+            offered=seq,
+        )
+    if seq == hwm:
+        if ts_state["last_envelope"] is not None and ts_state["last_envelope"] != envelope:
+            raise LogFailureError(
+                f"equivocation: two different timestamp statements seen for seq {seq}",
+                seq=seq,
+            )
+        return
+
+    ts_state["seq_hwm"] = seq
+    ts_state["last_envelope"] = envelope
+    _save_state(home, name, state)

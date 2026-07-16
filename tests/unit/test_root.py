@@ -1,7 +1,7 @@
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tessera.errors import PinMismatchError, SignatureError
+from tessera.errors import PinMismatchError, RollbackError, SignatureError
 from tessera.keys import key_id, public_bytes
 from tessera.root import (
     authorized_keys_for_role,
@@ -75,3 +75,15 @@ def test_authorized_keys_for_role_empty_when_no_keys():
     doc, envelope, root_kid, _, _, _ = _root_fixture()
     verified = verify_root_doc(envelope, pinned_fingerprint=root_kid)
     assert authorized_keys_for_role(verified, "timestamp") == {}
+
+
+def test_verify_root_doc_accepts_version_at_or_above_min_version():
+    doc, envelope, root_kid, _, _, _ = _root_fixture(root_version=3)
+    assert verify_root_doc(envelope, pinned_fingerprint=root_kid, min_version=3) == doc
+    assert verify_root_doc(envelope, pinned_fingerprint=root_kid, min_version=1) == doc
+
+
+def test_verify_root_doc_rejects_version_below_min_version():
+    doc, envelope, root_kid, _, _, _ = _root_fixture(root_version=2)
+    with pytest.raises(RollbackError):
+        verify_root_doc(envelope, pinned_fingerprint=root_kid, min_version=3)

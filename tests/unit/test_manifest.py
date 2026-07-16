@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from tessera import store
 from tessera.chunking import CHUNK_SIZE, compute_file_digest
-from tessera.errors import DigestMismatchError, InternalError, SignatureError
+from tessera.errors import DigestMismatchError, InternalError, RollbackError, SignatureError
 from tessera.hashing import b3_hex
 from tessera.keys import key_id, public_bytes
 from tessera.manifest import (
@@ -168,4 +168,32 @@ def test_verify_manifest_rejects_unauthorized_signer(tmp_path, home):
             publisher=m["publisher"],
             name=m["name"],
             version=m["version"],
+        )
+
+
+def test_verify_manifest_accepts_seq_at_or_above_min_seq(tmp_path, home):
+    m, envelope, digest, authorized = _signed_fixture(tmp_path, home, seq=5)
+    verified = verify_manifest_envelope(
+        envelope,
+        authorized_keys=authorized,
+        expected_digest=digest,
+        publisher=m["publisher"],
+        name=m["name"],
+        version=m["version"],
+        min_seq=5,
+    )
+    assert verified == m
+
+
+def test_verify_manifest_rejects_seq_below_min_seq(tmp_path, home):
+    m, envelope, digest, authorized = _signed_fixture(tmp_path, home, seq=2)
+    with pytest.raises(RollbackError):
+        verify_manifest_envelope(
+            envelope,
+            authorized_keys=authorized,
+            expected_digest=digest,
+            publisher=m["publisher"],
+            name=m["name"],
+            version=m["version"],
+            min_seq=3,
         )
