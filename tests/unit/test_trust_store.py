@@ -52,6 +52,12 @@ def test_manifest_seq_hwm_is_per_artifact(home):
     trust_store.check_and_advance_manifest_seq(home, "acme-lab", "sst5", 2)
 
 
+def test_get_timestamp_seq_hwm_defaults_to_zero_and_reflects_advances(home):
+    assert trust_store.get_timestamp_seq_hwm(home, "acme-lab") == 0
+    trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 5, {"payload": "x", "signatures": []})
+    assert trust_store.get_timestamp_seq_hwm(home, "acme-lab") == 5
+
+
 def test_timestamp_seq_hwm_advances_and_rejects_rollback(home):
     envelope_v1 = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
     trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope_v1)

@@ -116,6 +116,10 @@ def get_manifest_seq_hwm(home: Path, name: str, artifact: str) -> int:
     return _load_state(home, name)["artifacts"].get(artifact, {"seq_hwm": 0})["seq_hwm"]
 
 
+def get_timestamp_seq_hwm(home: Path, name: str) -> int:
+    return _load_state(home, name)["timestamp"]["seq_hwm"]
+
+
 def _save_state(home: Path, name: str, state: dict) -> None:
     atomic_write_json(state_path(home, name), state)
 
