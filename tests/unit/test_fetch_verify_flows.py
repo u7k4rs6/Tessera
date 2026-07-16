@@ -1,16 +1,23 @@
+import base64
+import json
+
 import pytest
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from tessera import cas as cas_mod
 from tessera import fetch_flow, originstore, store as store_mod, trust_store, verify_flow
-from tessera.hashing import b3_hex
-from tessera.httpclient import OriginClient
 from tessera.httpserver import build_app
 from tessera.keys import key_id, public_bytes
 from tessera.manifest import build_manifest, manifest_digest, sign_manifest
+from tessera.peers import PeerPool
 from tessera.root import build_root_doc, sign_root_doc
+from tessera.snapshot import build_and_digest_snapshot
+from tessera.timestamp import build_timestamp_statement, sign_timestamp
 
 pytestmark = pytest.mark.asyncio
+
+EXPECTED_CHECK_IDS = {"V1", "V2", "V4", "V5", "V6", "V8", "V9"}
 
 
 @pytest.fixture
@@ -29,7 +36,9 @@ def consumer_home(tmp_path):
 
 @pytest.fixture
 def published_artifact(tmp_path, origin_store):
-    """Publish one small artifact to `origin_store`; returns fingerprint + ref."""
+    """Publish one small artifact to `origin_store`, with a fresh timestamp
+    and snapshot, and returns fingerprint + ref.
+    """
     src = tmp_path / "src"
     src.mkdir()
     (src / "weights.bin").write_bytes(b"published artifact bytes" * 100)
@@ -42,7 +51,16 @@ def published_artifact(tmp_path, origin_store):
     release_pub = public_bytes(release_sk.public_key())
     release_kid = key_id(release_pub)
 
-    root_doc = build_root_doc(root_key_id=root_kid, root_pub=root_pub, release_keys=[(release_kid, release_pub)])
+    timestamp_sk = Ed25519PrivateKey.generate()
+    timestamp_pub = public_bytes(timestamp_sk.public_key())
+    timestamp_kid = key_id(timestamp_pub)
+
+    root_doc = build_root_doc(
+        root_key_id=root_kid,
+        root_pub=root_pub,
+        release_keys=[(release_kid, release_pub)],
+        timestamp_keys=[(timestamp_kid, timestamp_pub)],
+    )
     root_envelope = sign_root_doc(root_doc, root_sk, root_kid)
     originstore.write_root_doc(origin_store, root_kid, 1, root_envelope)
 
@@ -54,7 +72,32 @@ def published_artifact(tmp_path, origin_store):
     originstore.write_manifest_envelope(origin_store, digest, envelope)
     originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest)
 
+    reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
+
     return {"fingerprint": root_kid, "manifest_digest": digest, "src_file": src / "weights.bin"}
+
+
+def reissue_timestamp(origin_store, fingerprint, timestamp_sk, timestamp_kid):
+    artifacts = {}
+    for artifact in originstore.list_artifacts(origin_store, fingerprint):
+        versions = {}
+        best_version, best_seq = None, -1
+        for version in originstore.list_versions(origin_store, fingerprint, artifact):
+            pointer = originstore.read_current_pointer(origin_store, fingerprint, artifact, version)
+            manifest_env = originstore.read_manifest_envelope(origin_store, pointer["digest"])
+            seq = json.loads(base64.b64decode(manifest_env["payload"]))["seq"]
+            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"]}
+            if seq > best_seq:
+                best_seq, best_version = seq, version
+        artifacts[artifact] = {"current_version": best_version, "versions": versions}
+
+    _doc, canonical_bytes, snapshot_digest = build_and_digest_snapshot(publisher=fingerprint, artifacts=artifacts)
+    originstore.write_snapshot(origin_store, fingerprint, snapshot_digest, canonical_bytes)
+    seq = originstore.next_timestamp_seq(origin_store, fingerprint)
+    stmt = build_timestamp_statement(publisher=fingerprint, seq=seq, snapshot_digest=snapshot_digest)
+    envelope = sign_timestamp(stmt, timestamp_sk, timestamp_kid)
+    originstore.write_timestamp(origin_store, fingerprint, envelope)
+    return snapshot_digest
 
 
 @pytest.fixture
@@ -67,15 +110,19 @@ async def origin_server(origin_store):
         await server.close()
 
 
+async def _fetch(home, base_url, ref):
+    async with PeerPool(home, [base_url]) as pool:
+        return await fetch_flow.fetch(home, pool, ref)
+
+
 async def test_fetch_success_materializes_byte_identical_artifact(consumer_home, published_artifact, origin_server):
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
 
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    result = await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is True
     assert result["exit_code"] == 0
-    assert {c["id"] for c in result["checks"]} == {"V1", "V2", "V6", "V8", "V9"}
+    assert {c["id"] for c in result["checks"]} == EXPECTED_CHECK_IDS
     assert all(c["ok"] for c in result["checks"])
     assert result["artifact"]["digest"] == published_artifact["manifest_digest"]
 
@@ -84,8 +131,7 @@ async def test_fetch_success_materializes_byte_identical_artifact(consumer_home,
 
 
 async def test_fetch_unknown_publisher_exit_43(consumer_home, published_artifact, origin_server):
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    result = await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@1.2.0")
     assert result["ok"] is False
     assert result["exit_code"] == 43
     assert result["checks"][0]["id"] == "V1"
@@ -94,16 +140,14 @@ async def test_fetch_unknown_publisher_exit_43(consumer_home, published_artifact
 
 async def test_fetch_unknown_version_exit_21(consumer_home, published_artifact, origin_server):
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@9.9.9")
+    result = await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@9.9.9")
     assert result["ok"] is False
     assert result["exit_code"] == 21
 
 
 async def test_fetch_then_verify_offline_using_cache(consumer_home, published_artifact, origin_server):
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        fetch_result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    fetch_result = await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@1.2.0")
     assert fetch_result["ok"] is True
 
     materialized_dir = consumer_home / "verified" / "acme-lab" / "bert-tiny" / "1.2.0"
@@ -116,8 +160,7 @@ async def test_fetch_then_verify_offline_using_cache(consumer_home, published_ar
 
 async def test_verify_detects_tampered_local_file(consumer_home, published_artifact, origin_server):
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@1.2.0")
 
     tampered = consumer_home / "tampered.bin"
     data = bytearray(published_artifact["src_file"].read_bytes())
@@ -134,12 +177,7 @@ async def test_verify_detects_tampered_local_file(consumer_home, published_artif
 
 async def test_fetch_rejects_tampered_chunk_and_quarantines(consumer_home, published_artifact, origin_store, origin_server):
     # Corrupt the chunk on the origin's disk directly (simulating a compromised mirror).
-    from tessera import cas as cas_mod
-
     manifest_env = originstore.read_manifest_envelope(origin_store, published_artifact["manifest_digest"])
-    import base64
-    import json
-
     payload = json.loads(base64.b64decode(manifest_env["payload"]))
     chunk_digest = payload["files"][0]["chunks"][0]
     obj_path = cas_mod.object_path(origin_store, chunk_digest)
@@ -148,8 +186,7 @@ async def test_fetch_rejects_tampered_chunk_and_quarantines(consumer_home, publi
     obj_path.write_bytes(bytes(data))
 
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
-    async with OriginClient(str(origin_server.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    result = await _fetch(consumer_home, str(origin_server.make_url("")), "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is False
     assert result["exit_code"] == 40

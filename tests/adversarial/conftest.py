@@ -21,6 +21,8 @@ from tessera.httpserver import build_app
 from tessera.keys import key_id, public_bytes
 from tessera.manifest import build_manifest, manifest_digest, sign_manifest
 from tessera.root import build_root_doc, sign_root_doc
+from tessera.snapshot import build_and_digest_snapshot
+from tessera.timestamp import build_timestamp_statement, sign_timestamp
 
 
 @pytest.fixture
@@ -47,7 +49,16 @@ def published_artifact(tmp_path, origin_store):
     release_pub = public_bytes(release_sk.public_key())
     release_kid = key_id(release_pub)
 
-    root_doc = build_root_doc(root_key_id=root_kid, root_pub=root_pub, release_keys=[(release_kid, release_pub)])
+    timestamp_sk = Ed25519PrivateKey.generate()
+    timestamp_pub = public_bytes(timestamp_sk.public_key())
+    timestamp_kid = key_id(timestamp_pub)
+
+    root_doc = build_root_doc(
+        root_key_id=root_kid,
+        root_pub=root_pub,
+        release_keys=[(release_kid, release_pub)],
+        timestamp_keys=[(timestamp_kid, timestamp_pub)],
+    )
     root_envelope = sign_root_doc(root_doc, root_sk, root_kid)
     originstore.write_root_doc(origin_store, root_kid, 1, root_envelope)
 
@@ -59,14 +70,48 @@ def published_artifact(tmp_path, origin_store):
     originstore.write_manifest_envelope(origin_store, digest, envelope)
     originstore.write_current_pointer(origin_store, root_kid, "bert-tiny", "1.2.0", digest)
 
+    snapshot_digest = _reissue_timestamp(origin_store, root_kid, timestamp_sk, timestamp_kid)
+
     return {
         "fingerprint": root_kid,
         "manifest_digest": digest,
+        "snapshot_digest": snapshot_digest,
         "chunk_digest": manifest["files"][0]["chunks"][0],
         "src_file": src / "weights.bin",
         "root_sk": root_sk,
         "root_pub": root_pub,
+        "timestamp_sk": timestamp_sk,
+        "timestamp_kid": timestamp_kid,
     }
+
+
+def _reissue_timestamp(origin_store, fingerprint: str, timestamp_sk, timestamp_kid: str) -> str:
+    """Rebuild the snapshot from whatever `current_pointer`s exist and sign a
+    fresh timestamp over it -- the test-fixture equivalent of `origin
+    reissue-timestamp`, used both for the initial fixture and by T2B to
+    simulate a later, superseding release.
+    """
+    artifacts: dict = {}
+    for artifact in originstore.list_artifacts(origin_store, fingerprint):
+        versions: dict = {}
+        best_version, best_seq = None, -1
+        for version in originstore.list_versions(origin_store, fingerprint, artifact):
+            pointer = originstore.read_current_pointer(origin_store, fingerprint, artifact, version)
+            manifest_env = originstore.read_manifest_envelope(origin_store, pointer["digest"])
+            seq = decode_envelope_payload(manifest_env)["seq"]
+            versions[version] = {"seq": seq, "manifest_digest": pointer["digest"]}
+            if seq > best_seq:
+                best_seq, best_version = seq, version
+        artifacts[artifact] = {"current_version": best_version, "versions": versions}
+
+    _doc, canonical_bytes, snapshot_digest = build_and_digest_snapshot(publisher=fingerprint, artifacts=artifacts)
+    originstore.write_snapshot(origin_store, fingerprint, snapshot_digest, canonical_bytes)
+
+    seq = originstore.next_timestamp_seq(origin_store, fingerprint)
+    stmt = build_timestamp_statement(publisher=fingerprint, seq=seq, snapshot_digest=snapshot_digest)
+    envelope = sign_timestamp(stmt, timestamp_sk, timestamp_kid)
+    originstore.write_timestamp(origin_store, fingerprint, envelope)
+    return snapshot_digest
 
 
 @pytest.fixture

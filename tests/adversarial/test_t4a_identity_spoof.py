@@ -16,8 +16,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from tessera import fetch_flow, originstore, store as store_mod, trust_store
-from tessera.httpclient import OriginClient
 from tessera.keys import key_id, public_bytes
+from tessera.peers import PeerPool
 from tessera.root import build_root_doc, sign_root_doc
 
 pytestmark = pytest.mark.asyncio
@@ -32,8 +32,8 @@ def consumer_home(tmp_path):
 
 async def test_t4a_no_pin_at_all(consumer_home, published_artifact, fake_origin):
     # No `trust add` was ever run for "acme-lab".
-    async with OriginClient(str(fake_origin.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    async with PeerPool(consumer_home, [str(fake_origin.make_url(""))]) as pool:
+        result = await fetch_flow.fetch(consumer_home, pool, "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is False
     assert result["exit_code"] == 43
@@ -57,8 +57,8 @@ async def test_t4a_lookalike_key_rejected_by_pin_before_signature_check(
     impostor_envelope = sign_root_doc(impostor_doc, impostor_sk, impostor_kid)
     originstore.write_root_doc(origin_store, published_artifact["fingerprint"], 1, impostor_envelope)
 
-    async with OriginClient(str(fake_origin.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    async with PeerPool(consumer_home, [str(fake_origin.make_url(""))]) as pool:
+        result = await fetch_flow.fetch(consumer_home, pool, "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is False
     assert result["exit_code"] == 43
@@ -81,8 +81,8 @@ async def test_t4a_corrupted_self_signature_rejected(consumer_home, published_ar
     envelope["signatures"][0]["sig"] = base64.b64encode(bytes(bad_sig)).decode()
     originstore.write_root_doc(origin_store, published_artifact["fingerprint"], 1, envelope)
 
-    async with OriginClient(str(fake_origin.make_url(""))) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    async with PeerPool(consumer_home, [str(fake_origin.make_url(""))]) as pool:
+        result = await fetch_flow.fetch(consumer_home, pool, "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is False
     assert result["exit_code"] == 41

@@ -67,6 +67,19 @@ def test_timestamp_seq_equal_and_identical_envelope_is_a_noop(home):
     trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, dict(envelope))
 
 
+def test_get_root_version_hwm_defaults_to_zero_and_reflects_advances(home):
+    assert trust_store.get_root_version_hwm(home, "acme-lab") == 0
+    trust_store.check_and_advance_root_version(home, "acme-lab", 4)
+    assert trust_store.get_root_version_hwm(home, "acme-lab") == 4
+
+
+def test_get_manifest_seq_hwm_defaults_to_zero_and_reflects_advances(home):
+    assert trust_store.get_manifest_seq_hwm(home, "acme-lab", "bert-tiny") == 0
+    trust_store.check_and_advance_manifest_seq(home, "acme-lab", "bert-tiny", 7)
+    assert trust_store.get_manifest_seq_hwm(home, "acme-lab", "bert-tiny") == 7
+    assert trust_store.get_manifest_seq_hwm(home, "acme-lab", "sst5") == 0
+
+
 def test_timestamp_seq_equal_but_different_envelope_is_equivocation(home):
     envelope_a = {"payload": "aa", "signatures": [{"keyid": "k", "sig": "s1"}]}
     envelope_b = {"payload": "bb", "signatures": [{"keyid": "k", "sig": "s2"}]}

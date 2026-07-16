@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from tessera import fetch_flow, store as store_mod, trust_store
-from tessera.httpclient import OriginClient
+from tessera.peers import PeerPool
 
 pytestmark = pytest.mark.asyncio
 
@@ -30,8 +30,8 @@ async def test_t2a_tampered_chunk_in_transit_fails_closed(consumer_home, publish
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
     proxy = await tampering_proxy_factory(published_artifact["chunk_digest"])
 
-    async with OriginClient(proxy.base_url()) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    async with PeerPool(consumer_home, [proxy.base_url()]) as pool:
+        result = await fetch_flow.fetch(consumer_home, pool, "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is False
     assert result["exit_code"] == 40
@@ -68,8 +68,8 @@ async def test_t2a_honest_proxy_passes_through_unaffected(consumer_home, publish
     trust_store.add_pin(consumer_home, "acme-lab", published_artifact["fingerprint"])
     proxy = await tampering_proxy_factory("b3:" + "0" * 64)
 
-    async with OriginClient(proxy.base_url()) as client:
-        result = await fetch_flow.fetch(consumer_home, client, "acme-lab/bert-tiny@1.2.0")
+    async with PeerPool(consumer_home, [proxy.base_url()]) as pool:
+        result = await fetch_flow.fetch(consumer_home, pool, "acme-lab/bert-tiny@1.2.0")
 
     assert result["ok"] is True
     assert result["exit_code"] == 0
