@@ -93,3 +93,12 @@ def test_timestamp_seq_equal_but_different_envelope_is_equivocation(home):
 
     with pytest.raises(LogFailureError):
         trust_store.check_and_advance_timestamp_seq(home, "acme-lab", 1, envelope_b)
+
+
+def test_log_checkpoint_hwm_defaults_to_none_and_advances(home):
+    assert trust_store.get_log_checkpoint_hwm(home, "acme-lab") is None
+    trust_store.advance_log_checkpoint(home, "acme-lab", 5, "b3:" + "a" * 64)
+    assert trust_store.get_log_checkpoint_hwm(home, "acme-lab") == {"tree_size": 5, "root_hash": "b3:" + "a" * 64}
+
+    trust_store.advance_log_checkpoint(home, "acme-lab", 8, "b3:" + "b" * 64)
+    assert trust_store.get_log_checkpoint_hwm(home, "acme-lab") == {"tree_size": 8, "root_hash": "b3:" + "b" * 64}

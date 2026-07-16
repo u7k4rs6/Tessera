@@ -98,6 +98,7 @@ def _empty_state() -> dict:
         "root_version_hwm": 0,
         "timestamp": {"seq_hwm": 0, "last_envelope": None},
         "artifacts": {},
+        "log_checkpoint": None,
     }
 
 
@@ -118,6 +119,16 @@ def get_manifest_seq_hwm(home: Path, name: str, artifact: str) -> int:
 
 def get_timestamp_seq_hwm(home: Path, name: str) -> int:
     return _load_state(home, name)["timestamp"]["seq_hwm"]
+
+
+def get_log_checkpoint_hwm(home: Path, name: str) -> dict | None:
+    """Returns `{"tree_size": int, "root_hash": str}` for the last checkpoint
+    this consumer has verified for this publisher, or None if it has never
+    fetched one. `.get(...)` (not direct indexing) since this field was
+    added in M3 -- a `state.json` written by an earlier version won't have
+    it yet.
+    """
+    return _load_state(home, name).get("log_checkpoint")
 
 
 def _save_state(home: Path, name: str, state: dict) -> None:
@@ -190,4 +201,18 @@ def check_and_advance_timestamp_seq(home: Path, name: str, seq: int, envelope: d
 
     ts_state["seq_hwm"] = seq
     ts_state["last_envelope"] = envelope
+    _save_state(home, name, state)
+
+
+def advance_log_checkpoint(home: Path, name: str, tree_size: int, root_hash: str) -> None:
+    """Record the latest transparency-log checkpoint this consumer has
+    verified for this publisher. Pure state storage -- verifying that the
+    new checkpoint is a genuine consistency-preserving extension of the
+    previously stored one (V7's "consistency proof connects the consumer's
+    stored checkpoint to the current one") is `freshness.py`'s job, since
+    it requires a network round-trip (fetching the proof) this module
+    never does.
+    """
+    state = _load_state(home, name)
+    state["log_checkpoint"] = {"tree_size": tree_size, "root_hash": root_hash}
     _save_state(home, name, state)
