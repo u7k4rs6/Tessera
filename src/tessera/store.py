@@ -6,6 +6,7 @@
       objects/<aa>/<digest>
       verified/<publisher>/<artifact>/<version>/
       quarantine/<timestamp>-<reason>/
+      peers.json
 
 No database; state is small JSON/TOML files written with atomic rename.
 `<home>` is either the consumer's `~/.tessera` or an origin's `--store`
@@ -43,6 +44,10 @@ def verified_dir(home: Path) -> Path:
 
 def quarantine_dir(home: Path) -> Path:
     return home / "quarantine"
+
+
+def peers_path(home: Path) -> Path:
+    return home / "peers.json"
 
 
 def ensure_layout(home: Path) -> None:

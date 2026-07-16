@@ -1,11 +1,9 @@
 """Exit codes and error hierarchy, per 03_SECURITY_AND_ACCESS.md section 7.
 
-The full table is defined here even though M1 only ever emits a subset of
-these codes (0, 2, 20, 21, 40, 41, 43, 70). Codes 30, 31, 42, 44, 45 belong to
-checks (timestamp freshness, rollback, revocation, transparency log,
-provenance) that are not implemented until M2/M3 -- they are reserved here so
-later milestones never need to renumber anything a consumer might already be
-scripting against.
+The full table was defined from M1 even though M1 only ever emitted a
+subset of these codes (0, 2, 20, 21, 40, 41, 43, 70). M2 now emits 30
+(stale timestamp), 31 (rollback), and 44 (timestamp equivocation). The
+transparency log itself, and codes 42/45, remain M3.
 """
 
 from __future__ import annotations
@@ -54,6 +52,14 @@ class ReferenceNotFoundError(TesseraError):
     exit_code = ExitCode.REFERENCE_NOT_FOUND
 
 
+class StaleError(TesseraError):
+    exit_code = ExitCode.STALE
+
+
+class RollbackError(TesseraError):
+    exit_code = ExitCode.ROLLBACK
+
+
 class DigestMismatchError(TesseraError):
     exit_code = ExitCode.DIGEST_MISMATCH
 
@@ -64,6 +70,10 @@ class SignatureError(TesseraError):
 
 class PinMismatchError(TesseraError):
     exit_code = ExitCode.PIN_MISMATCH
+
+
+class LogFailureError(TesseraError):
+    exit_code = ExitCode.LOG_FAILURE
 
 
 class InternalError(TesseraError):

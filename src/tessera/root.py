@@ -20,16 +20,16 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from . import dsse
 from .canonical import canonicalize
 from .errors import PinMismatchError, SignatureError
+from .timeutil import format_iso8601, is_expired, utc_now
 
 ROOT_TYPE = "root/v1"
-CLOCK_SKEW = timedelta(minutes=10)
 
 
 def _b64(data: bytes) -> str:
@@ -45,7 +45,7 @@ def _key_entry(key_id: str, pub: bytes) -> dict:
 
 
 def default_root_expires(*, days: int = 365) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return format_iso8601(utc_now() + timedelta(days=days))
 
 
 def build_root_doc(
@@ -74,10 +74,6 @@ def build_root_doc(
 
 def sign_root_doc(doc: dict, root_private_key: Ed25519PrivateKey, root_key_id: str) -> dict:
     return dsse.sign(canonicalize(doc), root_private_key, root_key_id)
-
-
-def _parse_expires(expires: str) -> datetime:
-    return datetime.strptime(expires, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
 def verify_root_doc(envelope: dict, *, pinned_fingerprint: str) -> dict:
@@ -114,10 +110,10 @@ def verify_root_doc(envelope: dict, *, pinned_fingerprint: str) -> dict:
 
     expires = parsed.get("expires")
     try:
-        expires_at = _parse_expires(expires)
+        expired = is_expired(expires)
     except Exception as e:
         raise SignatureError(f"root document has an unparseable expiry: {expires!r}") from e
-    if datetime.now(timezone.utc) - CLOCK_SKEW > expires_at:
+    if expired:
         raise SignatureError(f"root document expired at {expires}")
 
     return parsed
