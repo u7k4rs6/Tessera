@@ -9,13 +9,14 @@ in-process fake-peer substrate the T2A/T4A adversarial tests build on
 in `aiohttp.test_utils.TestServer` and interpose a tampering proxy in front
 of it.
 
-`GET /v1/{publisher}/current/{name}/{version}` is an M1-only bridge from a
-version reference to a manifest digest, standing in for the snapshot/
-timestamp resolution flow that M2 introduces. It carries no trust weight of
-its own: `fetch_flow.py` treats its response as an unauthenticated hint and
-independently verifies the manifest it points to (V6) -- a wrong or
-malicious value here can only cause a failed/absent fetch, never an
-accepted bad artifact.
+`GET /v1/{publisher}/meta/timestamp` and `GET /v1/{publisher}/meta/snapshot/{digest}`
+are the M2 freshness layer (architecture doc section 4.2), superseding
+M1's `/current` bridge (removed). The timestamp route serves a DSSE
+envelope like the root document; the snapshot route serves RAW bytes via
+`web.Response`, never `web.json_response` -- the snapshot's digest is
+computed over its exact wire bytes (Decision D6, no signature of its own),
+so re-serializing through aiohttp's JSON encoder would silently break
+every snapshot fetch.
 """
 
 from __future__ import annotations
@@ -46,9 +47,10 @@ def build_app(store: Path) -> web.Application:
     app.add_routes(
         [
             web.get("/v1/{publisher}/meta/root/{n}", handle_root),
+            web.get("/v1/{publisher}/meta/timestamp", handle_timestamp),
+            web.get("/v1/{publisher}/meta/snapshot/{digest}", handle_snapshot),
             web.get("/v1/manifest/{digest}", handle_manifest),
             web.get("/v1/chunk/{digest}", handle_chunk),
-            web.get("/v1/{publisher}/current/{name}/{version}", handle_current),
         ]
     )
     return app
@@ -91,16 +93,26 @@ async def handle_chunk(request: web.Request) -> web.Response:
     return web.Response(body=data, content_type="application/octet-stream")
 
 
-async def handle_current(request: web.Request) -> web.Response:
+async def handle_timestamp(request: web.Request) -> web.Response:
     publisher = request.match_info["publisher"]
-    name = request.match_info["name"]
-    version = request.match_info["version"]
     _validate_component(publisher)
-    _validate_component(name)
-    _validate_component(version)
 
     store: Path = request.app[STORE_KEY]
-    pointer = originstore.read_current_pointer(store, publisher, name, version)
-    if pointer is None:
-        raise web.HTTPNotFound(text="reference not found")
-    return web.json_response(pointer)
+    envelope = originstore.read_timestamp(store, publisher)
+    if envelope is None:
+        raise web.HTTPNotFound(text="timestamp not found")
+    return web.json_response(envelope)
+
+
+async def handle_snapshot(request: web.Request) -> web.Response:
+    publisher = request.match_info["publisher"]
+    digest = request.match_info["digest"]
+    _validate_component(publisher)
+    _validate_digest(digest)
+
+    store: Path = request.app[STORE_KEY]
+    data = originstore.read_snapshot_bytes(store, publisher, digest)
+    if data is None:
+        raise web.HTTPNotFound(text="snapshot not found")
+    # Raw bytes, NOT web.json_response -- see module docstring.
+    return web.Response(body=data, content_type="application/json")

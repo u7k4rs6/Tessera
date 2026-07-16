@@ -1,13 +1,17 @@
 """Thin async HTTP client for a single peer, per
 02_TECHNICAL_ARCHITECTURE.md section 6.1.
 
-M1 is single-peer only (no fetch scheduler, no peer scoring -- that's M2),
-so this client talks to exactly one base URL. Every method returns `None`
-on a 404 (the caller decides what that means for the check in progress:
-absence of a root document reads differently than absence of a
+Each instance talks to exactly one base URL; peer attribution for scoring
+(`peers.py`) comes from which `OriginClient` (i.e. which URL) a caller used,
+not from a parameter threaded through every call. Every method returns
+`None` on a 404 (the caller decides what that means for the check in
+progress: absence of a root document reads differently than absence of a
 requested version) and raises NetworkError for transport failures or
 unexpected statuses, so callers never have to distinguish "peer is down"
 from "peer said no" via exception type inspection.
+
+`get_snapshot` returns raw bytes, never parsed JSON -- see `snapshot.py`'s
+docstring on why the wire bytes themselves are the trust-relevant value.
 """
 
 from __future__ import annotations
@@ -34,14 +38,17 @@ class OriginClient:
     async def get_root(self, publisher: str, version: int) -> dict | None:
         return await self._get_json(f"/v1/{publisher}/meta/root/{version}")
 
+    async def get_timestamp(self, publisher: str) -> dict | None:
+        return await self._get_json(f"/v1/{publisher}/meta/timestamp")
+
+    async def get_snapshot(self, publisher: str, digest: str) -> bytes | None:
+        return await self._get_bytes(f"/v1/{publisher}/meta/snapshot/{digest}")
+
     async def get_manifest(self, digest: str) -> dict | None:
         return await self._get_json(f"/v1/manifest/{digest}")
 
-    async def get_chunk(self, digest: str, *, peer: str | None = None) -> bytes | None:
+    async def get_chunk(self, digest: str) -> bytes | None:
         return await self._get_bytes(f"/v1/chunk/{digest}")
-
-    async def get_current(self, publisher: str, artifact: str, version: str) -> dict | None:
-        return await self._get_json(f"/v1/{publisher}/current/{artifact}/{version}")
 
     async def _get_json(self, path: str) -> dict | None:
         try:

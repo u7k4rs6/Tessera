@@ -111,20 +111,50 @@ async def test_chunk_rejects_path_traversal_digest(store, running_server):
     assert status == 400
 
 
-async def test_current_round_trip_and_404(store, running_server):
+async def test_current_bridge_route_is_gone(store, running_server):
+    # M1's /current bridge is superseded by the signed snapshot (D16); the
+    # route itself no longer exists, so any request to it 404s at the
+    # router level (no handler ever runs).
     fingerprint = "b3:" + "c" * 64
-    manifest_digest = "b3:" + "d" * 64
-    originstore.write_current_pointer(store, fingerprint, "bert-tiny", "1.2.0", manifest_digest)
+    originstore.write_current_pointer(store, fingerprint, "bert-tiny", "1.2.0", "b3:" + "d" * 64)
+    status = await _raw_get_status(running_server, f"/v1/{fingerprint}/current/bert-tiny/1.2.0")
+    assert status == 404
+
+
+async def test_timestamp_round_trip_and_404(store, running_server):
+    fingerprint = "b3:" + "c" * 64
+    envelope = {"payloadType": "t", "payload": "cGF5bG9hZA==", "signatures": [{"keyid": "k", "sig": "s"}]}
+    originstore.write_timestamp(store, fingerprint, envelope)
 
     async with OriginClient(str(running_server.make_url(""))) as client:
-        pointer = await client.get_current(fingerprint, "bert-tiny", "1.2.0")
-        assert pointer == {"digest": manifest_digest}
+        fetched = await client.get_timestamp(fingerprint)
+        assert fetched == envelope
 
-        missing = await client.get_current(fingerprint, "bert-tiny", "9.9.9")
+        missing = await client.get_timestamp("b3:" + "e" * 64)
         assert missing is None
 
 
-async def test_current_rejects_unsafe_component(store, running_server):
-    fingerprint = "b3:" + "e" * 64
-    status = await _raw_get_status(running_server, f"/v1/{fingerprint}/current/%2e%2e/1.0.0")
+async def test_timestamp_rejects_unsafe_publisher_component(store, running_server):
+    status = await _raw_get_status(running_server, "/v1/%2e%2e/meta/timestamp")
     assert status == 400
+
+
+async def test_snapshot_round_trip_and_404(store, running_server):
+    fingerprint = "b3:" + "c" * 64
+    canonical_bytes = b'{"artifacts":{},"publisher":"b3:c","tessera":"snapshot/v1"}'
+    digest = b3_hex(canonical_bytes)
+    originstore.write_snapshot(store, fingerprint, digest, canonical_bytes)
+
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        fetched = await client.get_snapshot(fingerprint, digest)
+        assert fetched == canonical_bytes  # exact bytes, not re-serialized
+
+        missing = await client.get_snapshot(fingerprint, "b3:" + "f" * 64)
+        assert missing is None
+
+
+async def test_snapshot_rejects_malformed_digest(store, running_server):
+    fingerprint = "b3:" + "c" * 64
+    async with OriginClient(str(running_server.make_url(""))) as client:
+        with pytest.raises(NetworkError):
+            await client.get_snapshot(fingerprint, "not-a-digest")
