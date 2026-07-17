@@ -19,7 +19,7 @@ dataset record-index diffing (M3); and eclipse/freeze hardening,
 cross-source timestamp equivocation checking, a combined-attack chaos
 scenario, parser fuzzing, and scripted compromise-playbook drills (M4).
 The full V1-V10 verification pipeline runs on every `fetch`. A standalone
-mirror daemon is the one deliberately-deferred, post-M4 item -- see
+mirror daemon is the one deliberately-deferred, post-M4 item; see
 `DECISIONS.md` (D10) for why. `THREAT_COVERAGE.md` maps every threat in
 `03_SECURITY_AND_ACCESS.md`'s table to its proving test.
 
@@ -38,14 +38,14 @@ python3 -m venv .venv
 
 This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B, T6A, T6B
 adversarial tests plus the M4 combined chaos scenario (T1+T2b+T6a against
-one fetch) -- in-process tampering mirror / lookalike-key / stale-mirror /
+one fetch), all in-process tampering mirror / lookalike-key / stale-mirror /
 root-rotation / key-revocation / split-view / eclipse / Sybil-flood
-fixtures, all built from real Tessera code, not mocks; the
+fixtures, built from real Tessera code, not mocks; the
 PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE, PBT-HISTORY-MONOTONE, and
 transparency-log Merkle-proof property tests, plus M4's parser fuzzing
 (structurally-arbitrary, not single-byte-mutated, input across every
 envelope/manifest/root/timestamp/checkpoint/provenance/snapshot/proof
-parser -- `--hypothesis-profile=thorough` for a deeper, opt-in 1000-
+parser; use `--hypothesis-profile=thorough` for a deeper, opt-in 1000-
 example pass); and end-to-end scripted scenarios driven through the real
 `tessera` CLI, including a multi-mirror resilience run, a mirror sync/
 serve round trip, a full M3 ceremony walkthrough (provenance-carrying
@@ -75,7 +75,7 @@ tessera origin reissue-timestamp --store ./origin-store --timestamp-key ts.key
 tessera origin serve --store ./origin-store --bind 127.0.0.1:7433
 ```
 
-`origin reissue-timestamp` is independent of `publish` -- the timestamp
+`origin reissue-timestamp` is independent of `publish`: the timestamp
 key is meant to live on a different, more frequently-online host than the
 release key, and it needs to run on its own cadence (well inside the 24h
 TTL) even when nothing new has been published.
@@ -98,7 +98,7 @@ tessera mirror sync <fingerprint> --from http://127.0.0.1:7433 --store ./mirror-
 tessera mirror serve --store ./mirror-store --bind 0.0.0.0:7433
 ```
 
-Publish with provenance (materials resolved from the local trust cache --
+Publish with provenance (materials resolved from the local trust cache;
 `fetch` them first) and a dataset record index:
 
 ```
@@ -120,7 +120,7 @@ tessera log show acme-lab
 ```
 
 Rotate the root key (run wherever the current AND new root private keys
-are both available -- D5 keeps root keys offline) and apply it on the
+are both available; D5 keeps root keys offline) and apply it on the
 publish host:
 
 ```

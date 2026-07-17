@@ -3,7 +3,7 @@
 Per 03_SECURITY_AND_ACCESS.md section 9: "Each checkpoint report lists
 which tests ran, which threats they cover, and explicitly what was not
 tested yet." This is that report, cumulative across all four milestones
-(M1-M4, all complete) rather than an M4-only artifact — hand-maintained
+(M1-M4, all complete) rather than an M4-only artifact, hand-maintained
 alongside `DECISIONS.md`, not generated tooling, matching this project's
 existing "inspectable over clever" convention (D9).
 
@@ -17,7 +17,7 @@ threat table; read that document for the authoritative wording.
 | T1 | Malicious/compromised mirror alters bytes | every chunk hash-verified before write; peer blacklisted on mismatch | `tests/adversarial/test_t1_mirror_tamper.py` | M2 | availability only |
 | T2a | Tampering in transit | end-to-end content addressing; nothing trusted for being "from" anyone | `tests/adversarial/test_t2a_transit_tamper.py` | M1 | none for integrity |
 | T2b | Replay of stale artifacts | signed, TTL-bounded, monotonic timestamp `seq`; consumer high-water marks; snapshot digest-bound to timestamp | `tests/adversarial/test_t2b_replay_rollback.py` | M2 | freeze within one TTL window (loud after) |
-| T3a | Byte-valid poison from a non-publisher | any byte change breaks chunk/file digests — mechanically identical to T1 | covered by T1's mechanism directly (`cas.write_verified` doesn't distinguish attacker identity); no separate dedicated test | M2 | none |
+| T3a | Byte-valid poison from a non-publisher | any byte change breaks chunk/file digests, mechanically identical to T1 | covered by T1's mechanism directly (`cas.write_verified` doesn't distinguish attacker identity); no separate dedicated test | M2 | none |
 | T3b | Byte-valid poison signed by the publisher | out of scope for prevention (integrity, not quality); detective: mandatory provenance, record-index diff, transparency log | `tests/e2e/test_m3_ceremony.py` (dataset diff + log inclusion/checkpoint advance, scripted through the real CLI) | M3 | poison present from v1.0 with plausible provenance is not detectable |
 | T4a | Spoofed publisher identity | identity is the root-key fingerprint; local pin fails against any other key | `tests/adversarial/test_t4a_identity_spoof.py` | M1 | first-pin bootstrap is out-of-band |
 | T4b | Key rotation abused/broken | root chain requires TUF-style cross-signing (root N+1 satisfies root N's threshold AND its own) | `tests/adversarial/test_t4b_rotation.py`, `tests/unit/test_root.py` | M3 | root-key compromise itself (see playbook, T4a/root-key drill below) |
@@ -35,12 +35,12 @@ threat table; read that document for the authoritative wording.
 | PBT-CHUNK-MUTATE | any chunk, any mutation (flip/truncate/extend) → rejected before write | `tests/property/test_pbt_chunk_mutate.py` | M1 |
 | PBT-HISTORY-MONOTONE | any valid metadata history, any replayed prefix or reordering → rollback/staleness error | `tests/property/test_pbt_history_monotone.py` | M2 |
 | (unnamed, informal) | Merkle tree Merkle math: any valid tree, any single-element mutation of a proof/leaf → verification fails | `tests/property/test_pbt_log.py` | M3 |
-| (M4 parser fuzzing) | every named parser entry point (envelope, manifest, root, timestamp, checkpoint, provenance, snapshot, proof), fed structurally-arbitrary — not single-byte-mutated — input, never raises anything but a documented `TesseraError` | `tests/property/test_pbt_fuzz_envelope.py`, `test_pbt_fuzz_documents.py`, `test_pbt_fuzz_snapshot.py`, `test_pbt_fuzz_proofs.py` | M4 |
+| (M4 parser fuzzing) | every named parser entry point (envelope, manifest, root, timestamp, checkpoint, provenance, snapshot, proof), fed structurally-arbitrary (not single-byte-mutated) input, never raises anything but a documented `TesseraError` | `tests/property/test_pbt_fuzz_envelope.py`, `test_pbt_fuzz_documents.py`, `test_pbt_fuzz_snapshot.py`, `test_pbt_fuzz_proofs.py` | M4 |
 
 M4's parser fuzzing pass (run at both the default 100-example budget and an
 opt-in 1000-example "thorough" profile, `--hypothesis-profile=thorough`,
 across several random seeds) found and fixed five real crash bugs beyond
-the two found by pre-reading the code — see `DECISIONS.md`'s M4 section
+the two found by pre-reading the code; see `DECISIONS.md`'s M4 section
 for each. None were reachable by a network attacker without holding a
 currently-authorized signing key or, in the transparency-log proof case,
 controlling a configured peer's responses; all are now fail-closed.
@@ -55,7 +55,7 @@ controlling a configured peer's responses; all are now fail-closed.
 
 The root-key drill found and fixed a real bug in the recovery path itself
 (`trust_store.add_pin` didn't clear the old identity's rollback/
-equivocation state on re-pin) — see `DECISIONS.md`.
+equivocation state on re-pin); see `DECISIONS.md`.
 
 ## The chaos scenario (03_SECURITY_AND_ACCESS.md section 9)
 
@@ -70,10 +70,10 @@ individual proving test.
 ## Explicitly out of scope / not tested
 
 - A standalone mirror daemon (D10; noted as a strictly post-M4, Rust-
-  revisit option — nothing in the current one-shot `mirror sync`/`mirror
+  revisit option; nothing in the current one-shot `mirror sync`/`mirror
   serve` CLI commands changes).
 - Concurrent (as opposed to sequential fallback) multi-source metadata
-  resolution and equivocation checking — a deliberate M2/M3/M4-consistent
+  resolution and equivocation checking, a deliberate M2/M3/M4-consistent
   simplification (Open Decision 6 in the M2 plan; carried through
   `cross_check_checkpoints` and `cross_check_timestamps`).
 - Root document same-session cross-source equivocation checking
