@@ -1,154 +1,214 @@
-# Tessera
+<p align="center">
+  <img src="docs/img/hero.svg" width="880" alt="Tessera. Verified by default. Poisoning-resistant distribution for ML models and datasets. Trust the signature. Never the transport.">
+</p>
 
-Verified-by-default distribution for ML models and datasets. A publisher
-signs once, any number of untrusted mirrors carry bytes, and every
-consumer verifies locally that what it received is exactly what the
-publisher signed. A mirror can withhold content but is structurally unable
-to poison it; there is no unverified fetch path, anywhere.
+<p align="center">
+  <a href="01_PRD.md">PRD</a> ·
+  <a href="02_TECHNICAL_ARCHITECTURE.md">Architecture</a> ·
+  <a href="03_SECURITY_AND_ACCESS.md">Security &amp; threat model</a> ·
+  <a href="04_FRONTEND_SPEC.md">CLI spec</a> ·
+  <a href="THREAT_COVERAGE.md">Threat coverage</a> ·
+  <a href="DECISIONS.md">Decisions</a>
+</p>
 
-This repository implements **all four milestones (M1-M4)**: content-
-addressed storage, chunking, the signed manifest, DSSE/JCS sign-and-verify,
-an origin HTTP server, materialize/quarantine, the core exit-code table
-(M1); the timestamp+snapshot freshness layer, consumer-persisted rollback
-high-water marks, a multi-peer fetch scheduler with persistent peer
-scoring/blacklisting, and mirror sync/serve (M2); root key rotation with
-TUF-style cross-signing, fail-closed retroactive key revocation, a
-transparency log with inclusion/consistency proofs and cross-source
-equivocation detection, provenance attestations with a lineage walk, and
-dataset record-index diffing (M3); and eclipse/freeze hardening,
-cross-source timestamp equivocation checking, a combined-attack chaos
-scenario, parser fuzzing, and scripted compromise-playbook drills (M4).
-The full V1-V10 verification pipeline runs on every `fetch`. A standalone
-mirror daemon is the one deliberately-deferred, post-M4 item; see
-`DECISIONS.md` (D10) for why. `THREAT_COVERAGE.md` maps every threat in
-`03_SECURITY_AND_ACCESS.md`'s table to its proving test.
+---
 
-## Install (development)
+## What is Tessera?
 
-```
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-```
+Tessera is a verified-by-default distribution system for machine learning models and datasets.
 
-## Run the tests
+Publishers sign once. Any number of untrusted mirrors distribute bytes. Every consumer verifies
+locally that what it received is exactly what the publisher signed.
 
-```
-.venv/bin/pytest
-```
+A mirror can deny availability. It cannot forge authenticity.
 
-This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B, T6A, T6B
-adversarial tests plus the M4 combined chaos scenario (T1+T2b+T6a against
-one fetch), all in-process tampering mirror / lookalike-key / stale-mirror /
-root-rotation / key-revocation / split-view / eclipse / Sybil-flood
-fixtures, built from real Tessera code, not mocks; the
-PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE, PBT-HISTORY-MONOTONE, and
-transparency-log Merkle-proof property tests, plus M4's parser fuzzing
-(structurally-arbitrary, not single-byte-mutated, input across every
-envelope/manifest/root/timestamp/checkpoint/provenance/snapshot/proof
-parser; use `--hypothesis-profile=thorough` for a deeper, opt-in 1000-
-example pass); and end-to-end scripted scenarios driven through the real
-`tessera` CLI, including a multi-mirror resilience run, a mirror sync/
-serve round trip, a full M3 ceremony walkthrough (provenance-carrying
-publish, dataset record diff, rotate, revoke, `--resign-all` recovery,
-and `status`), and the M4 timestamp-key/root-key compromise-playbook
-drills.
+### Core guarantees
+
+- No unverified fetch path exists.
+- Mirrors never become trust anchors.
+- Consumers verify every byte locally.
+- Content stays verifiable across any number of mirrors.
+- Key compromise is recoverable without sacrificing integrity.
+- Previously trusted artifacts remain auditable.
+
+Everything below explains how those six are enforced, and links to the real spec section for each.
 
 ## Quickstart
 
-One-time publisher setup:
-
-```
+```sh
+# publisher, once
 tessera keygen --role root --out root.key
 tessera keygen --role release --out release.key
 tessera keygen --role timestamp --out ts.key
 tessera publisher init acme-lab --root-key root.key --store ./origin-store
 tessera publisher delegate --role release --key release.key.pub --root-key root.key --store ./origin-store
 tessera publisher delegate --role timestamp --key ts.key.pub --root-key root.key --store ./origin-store
-```
 
-Publish a release, reissue freshness, and serve it:
-
-```
-tessera publish ./my-model-dir --name bert-tiny --version 1.2.0 --type model \
+# publish a release, keep freshness alive, serve it
+tessera publish ./bert-tiny --name bert-tiny --version 1.2.0 --type model \
     --release-key release.key --store ./origin-store
 tessera origin reissue-timestamp --store ./origin-store --timestamp-key ts.key
-tessera origin serve --store ./origin-store --bind 127.0.0.1:7433
-```
+tessera origin serve --store ./origin-store --bind 0.0.0.0:7433
 
-`origin reissue-timestamp` is independent of `publish`: the timestamp
-key is meant to live on a different, more frequently-online host than the
-release key, and it needs to run on its own cadence (well inside the 24h
-TTL) even when nothing new has been published.
-
-Pin the publisher and fetch, from a consumer. `--mirror` is repeatable;
-`fetch` will retry a chunk against another configured mirror if one serves
-a bad one, and score that mirror down for future sessions:
-
-```
-tessera trust add acme-lab <fingerprint printed by publisher init> \
-    --mirror http://127.0.0.1:7433 --mirror http://backup-mirror:7433
-tessera fetch acme-lab/bert-tiny@1.2.0
-```
-
-Running a mirror requires no keys or accounts. `mirror sync` replicates
-every root version and the transparency log alongside chunks/manifests:
-
-```
-tessera mirror sync <fingerprint> --from http://127.0.0.1:7433 --store ./mirror-store
+# mirror, no credentials, no trust
+tessera mirror sync <fingerprint> --from http://origin:7433 --store ./mirror-store
 tessera mirror serve --store ./mirror-store --bind 0.0.0.0:7433
-```
 
-Publish with provenance (materials resolved from the local trust cache;
-`fetch` them first) and a dataset record index:
-
-```
-tessera publish ./finetuned-model --name bert-finetuned --version 1.0.0 --type model \
-    --base acme-lab/base-model@1.0.0 --dataset acme-lab/my-dataset@1.0.0 \
-    --code git+https://example.com/train@abc123 \
-    --release-key release.key --store ./origin-store
-
-tessera publish ./my-dataset-dir --name my-dataset --version 2.0.0 --type dataset \
-    --records line --release-key release.key --store ./origin-store
-```
-
-Inspect lineage, diff two dataset versions, and check the transparency log:
-
-```
-tessera provenance acme-lab/bert-finetuned@1.0.0
-tessera diff acme-lab/my-dataset@1.0.0 acme-lab/my-dataset@2.0.0
-tessera log show acme-lab
-```
-
-Rotate the root key (run wherever the current AND new root private keys
-are both available; D5 keeps root keys offline) and apply it on the
-publish host:
-
-```
-tessera keygen --role root --out root2.key
-tessera rotate --store ./origin-store --root-key root.key --new-root-key root2.key --out rotated.json
-tessera publisher import-root rotated.json --store ./origin-store --release-key release.key
-```
-
-Revoke a compromised key (D13: fail closed, retroactive) and recover:
-
-```
-tessera revoke <release-key-fingerprint> --reason compromised \
-    --store ./origin-store --root-key root2.key --out revoked.json
-tessera publisher import-root revoked.json --store ./origin-store --release-key release.key
-
-tessera keygen --role release --out release2.key
-tessera publisher delegate --role release --key release2.key.pub --root-key root2.key --store ./origin-store
-tessera publish --resign-all --release-key release2.key --store ./origin-store
-```
-
-Check for materialized artifacts whose signer has since been revoked:
-
-```
+# consumer, trusts only the pinned fingerprint
+tessera trust add acme-lab <fingerprint> --mirror http://origin:7433
+tessera fetch acme-lab/bert-tiny@1.2.0
+tessera verify ./bert-tiny --ref acme-lab/bert-tiny@1.2.0
 tessera status acme-lab
 ```
 
-Every command accepts `--json` for a machine-readable object (`result/v1`
-for `fetch`/`verify`; `lineage/v1`, `diff/v1`, `status/v1`, `log/v1` for
-the M3 report commands); human output is a rendering of the same object.
-See `04_FRONTEND_SPEC.md` for the full command surface and exit-code
-table.
+Nothing is written to `verified/` until every gate in the pipeline below clears. A failed fetch
+leaves no partial artifact.
+
+## Architecture
+
+<img src="docs/img/architecture.svg" width="880" alt="Publisher signs a manifest once. Content addressed storage feeds three untrusted mirrors. Mirror B serves altered bytes, its seam does not match, and it is dropped. The consumer verifies locally from the remaining mirrors and materializes the artifact.">
+
+Mirror B is compromised. It serves altered bytes and the fetch still succeeds, because a mirror
+was never load-bearing for authenticity in the first place.
+
+Detail: [02_TECHNICAL_ARCHITECTURE.md](02_TECHNICAL_ARCHITECTURE.md)
+
+## Threat model
+
+<img src="docs/img/threat-model.svg" width="880" alt="Tampered chunk rejected. Rollback attack rejected. Split view detected. Revoked key fails closed. Eclipse attack recovered.">
+
+Two of these are honest amber rather than cyan. A split view is **detected**, not prevented. An
+eclipse is **recovered from**, which means it happened. Tessera does not claim to stop either.
+
+Full model, including what is explicitly out of scope: [03_SECURITY_AND_ACCESS.md](03_SECURITY_AND_ACCESS.md)
+
+## Verification pipeline
+
+<img src="docs/img/verification-pipeline.svg" width="880" alt="Ten gates run in order: pin, root chain, revocations, timestamp, snapshot, manifest, transparency, chunk digests, assembly, provenance. Every seam must close before the artifact is materialized.">
+
+The consumer holds exactly one piece of trusted state: the pinned root fingerprint. Every other
+claim in the chain (V1 through V10) is proven against it locally, offline where possible, with no
+network in the trust path.
+
+## Security guarantees
+
+| Property | Enforced by |
+|---|---|
+| Mirrors cannot poison content | content addressing (BLAKE3) |
+| Every fetch is verified locally | DSSE + manifest (V6) |
+| Rollback is detected | consumer-persisted high-water marks (V2/V4/V6) |
+| Root rotation is supported | offline root, TUF-style cross-signing (V2) |
+| Compromised keys are revocable | fail-closed, retroactive revocation (V3) |
+| Provenance is cryptographically linked | signed attestation, bound to the manifest both ways (V10) |
+| Transparency detects equivocation | inclusion + consistency proofs, cross-source checks (V7) |
+
+## What is in the box
+
+| | |
+|---|---|
+| **Content addressing** | Every chunk is named by its own BLAKE3 digest. |
+| **DSSE** | Signatures bind the payload and its type. |
+| **Transparency log** | Publish once, prove it in public. |
+| **Provenance** | Every artifact traces back to a declared origin. |
+| **Rollback protection** | An old snapshot never replaces a newer one. |
+| **Freshness** | Signed timestamps bound how stale a view can be. |
+| **Multi mirror** | Any number of carriers, none of them trusted. |
+| **Key rotation** | Roots change without breaking existing trust. |
+
+## Security lifecycle
+
+**Publish**
+
+1. **Generate keys.** Root created offline. It never touches a network.
+2. **Delegate.** Root signs the release and timestamp keys into the root document.
+3. **Publish.** Manifest signed once. Chunks written to content-addressed storage.
+
+**Carry and consume**
+
+4. **Mirror.** Any host copies the bytes. No credentials needed.
+5. **Fetch.** Consumer pulls from whichever configured mirror answers, scored by reliability.
+6. **Verify.** Ten gates run locally against the pinned root alone.
+7. **Materialize.** Signed bytes land on disk. Nothing else does.
+
+**Recover**
+
+8. **Rotate.** A new root, cross-signed by the old one. Trust carries over, no re-pin needed.
+9. **Revoke.** A compromised key stops verifying everywhere at once, retroactively.
+
+## Why Tessera?
+
+The realistic alternative is a mirror serving a checksum file next to the artifact. That checksum
+is served by the same host as the bytes, which means it proves nothing about a host you do not
+trust.
+
+| Problem | Mirror + checksum file | Tessera |
+|---|---|---|
+| Mirror compromise | trusted by default | **safe** |
+| Rollback | undetected | **protected** |
+| Tampered bytes | only if the host is honest | **rejected** |
+| Split view | invisible | **detected** |
+| Offline verification | no | **yes** |
+| Provenance | none | **yes** |
+
+## Threat coverage
+
+<img src="docs/img/threat-coverage.svg" width="880" alt="Every threat becomes a spec rule, an implementation, a property test, and a chaos test.">
+
+Every threat named in the model travels the full width of that diagram. A mitigation counts as
+done only when a test proves it fails closed, not when the code exists.
+
+Full matrix, one row per threat with its proving test file: [THREAT_COVERAGE.md](THREAT_COVERAGE.md)
+
+## Design decisions
+
+| | Decision | Status | Why |
+|---|---|---|---|
+| **D5** | Three key roles: offline root, online release, online timestamp | accepted | The minimum role set the threat model needs. |
+| **D10** | Python for all four milestones | accepted | Native-speed hashing via the `blake3` binding, Hypothesis for property-based adversarial tests. Rust noted only as a post-M4 option for a standalone mirror daemon. |
+| **D13** | Revocation is retroactive and fail-closed, no time-based carve-out | accepted | Without trusted timestamping there is no sound way to tell a pre-compromise signature from a backdated one. |
+| **D24** | A root document's `revoked` list is cumulative across versions | accepted | A single verified root document already carries its own full revocation history; no need to re-walk the chain. |
+
+42 decisions recorded end to end, including every real bug found while building and testing this: [DECISIONS.md](DECISIONS.md)
+
+## Documentation
+
+| | |
+|---|---|
+| [Product requirements](01_PRD.md) | [Technical architecture](02_TECHNICAL_ARCHITECTURE.md) |
+| [Security & threat model](03_SECURITY_AND_ACCESS.md) | [CLI / frontend spec](04_FRONTEND_SPEC.md) |
+| [Design decisions](DECISIONS.md) | [Threat coverage matrix](THREAT_COVERAGE.md) |
+
+## Install (development)
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+## Run the tests
+
+```sh
+.venv/bin/pytest
+```
+
+This runs the unit suite; the T1, T2A, T2B, T4A, T4B, T4C, T5B, T6A, T6B adversarial tests plus the
+M4 combined chaos scenario (T1+T2b+T6a against one fetch), all in-process tampering-mirror /
+lookalike-key / stale-mirror / root-rotation / key-revocation / split-view / eclipse / Sybil-flood
+fixtures, built from real Tessera code, not mocks; the PBT-MANIFEST-MUTATE, PBT-CHUNK-MUTATE,
+PBT-HISTORY-MONOTONE, and transparency-log Merkle-proof property tests, plus M4's parser fuzzing
+(structurally-arbitrary, not single-byte-mutated, input across every
+envelope/manifest/root/timestamp/checkpoint/provenance/snapshot/proof parser; use
+`--hypothesis-profile=thorough` for a deeper, opt-in 1000-example pass); and end-to-end scripted
+scenarios driven through the real `tessera` CLI, including a multi-mirror resilience run, a mirror
+sync/serve round trip, a full ceremony walkthrough (provenance-carrying publish, dataset record
+diff, rotate, revoke, `--resign-all` recovery, and `status`), and the compromise-playbook drills.
+
+## License
+
+Not yet chosen.
+
+---
+
+<p align="center">
+  <b>Trust the signature. Never the transport.</b>
+</p>

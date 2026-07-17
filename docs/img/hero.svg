@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 360" width="880" height="360" role="img" aria-label="Tessera. Verified by default. Poisoning-resistant distribution for ML models and datasets. Trust the signature, never the transport.">
+<defs>
+  <pattern id="h-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+    <path d="M40 0H0V40" fill="none" stroke="#0d1523" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="h-vig" cx="24%" cy="50%" r="85%">
+    <stop offset="0" stop-color="#0a1220"/><stop offset="1" stop-color="#04060b"/>
+  </radialGradient>
+  <radialGradient id="h-core" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#22d3ee" stop-opacity=".5"/>
+    <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="h-glow" x="-120%" y="-120%" width="340%" height="340%">
+    <feGaussianBlur stdDeviation="2.4" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+<style>
+  text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  .h-eyebrow{fill:#22d3ee;font-size:11px;letter-spacing:5px}
+  .h-word{fill:#f2fbff;font-size:58px;letter-spacing:6px;font-weight:700}
+  .h-tag{fill:#8fb2cc;font-size:14.5px;letter-spacing:.2px}
+  .h-motto{fill:#eef8ff;font-size:21px;letter-spacing:.2px;font-weight:600}
+  .h-motto2{fill:#22d3ee;font-size:21px;letter-spacing:.2px;font-weight:600;filter:url(#h-glow)}
+  .h-term{fill:#8fb2cc;font-size:11.5px;letter-spacing:.1px}
+  .h-term .p{fill:#3f7d9c}
+  .h-term .ok{fill:#39e6a0}
+  .h-term .no{fill:#ff5c6b}
+  .h-term .em{fill:#bfe9ff}
+  .h-term .cy{fill:#22d3ee}
+  .h-chip{fill:#080e18;stroke:#1c2b40;stroke-width:1}
+  .h-chip-t{fill:#6f9ab8;font-size:9.5px;letter-spacing:1.6px}
+  .h-mirrors{fill:#5b6b80;font-size:9px;letter-spacing:1.6px}
+  .h-mirrors .cy{fill:#22d3ee}
+  .h-star{fill:#96d2ff}
+
+  .h-edge{stroke-width:1.1;fill:none}
+  .h-seam{animation:hseam 7s ease-in-out infinite}
+  @keyframes hseam{
+    0%{stroke:var(--c0);opacity:.55}
+    50%{stroke:#eafcff;opacity:1}
+    100%{stroke:var(--c0);opacity:.55}
+  }
+  .h-vert{animation:hvert 7s ease-in-out infinite}
+  @keyframes hvert{0%{opacity:.5}50%{opacity:1}100%{opacity:.5}}
+  .h-orbit{animation:horbit linear infinite}
+  @keyframes horbit{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  .h-core{animation:hcore 5s ease-in-out infinite}
+  @keyframes hcore{0%{opacity:.35}50%{opacity:.65}100%{opacity:.35}}
+
+  @media (prefers-reduced-motion:reduce){
+    .h-seam,.h-vert,.h-orbit,.h-core{animation:none}
+    .h-seam{stroke:#eafcff;opacity:1}
+    .h-vert{opacity:1}
+  }
+</style>
+<rect width="880" height="360" fill="url(#h-vig)"/>
+<rect width="880" height="360" fill="url(#h-grid)"/>
+
+<circle class="h-star" cx="503.6" cy="64.1" r="0.6" opacity="0.10"/>
+<circle class="h-star" cx="617.2" cy="135.4" r="0.6" opacity="0.28"/>
+<circle class="h-star" cx="445.1" cy="42.5" r="1.1" opacity="0.10"/>
+<circle class="h-star" cx="378.6" cy="154.9" r="0.6" opacity="0.29"/>
+<circle class="h-star" cx="668.0" cy="207.6" r="0.6" opacity="0.21"/>
+<circle class="h-star" cx="542.6" cy="338.1" r="0.6" opacity="0.20"/>
+<circle class="h-star" cx="401.4" cy="153.2" r="0.6" opacity="0.21"/>
+<circle class="h-star" cx="630.3" cy="240.4" r="0.6" opacity="0.21"/>
+<circle class="h-star" cx="672.5" cy="137.6" r="0.6" opacity="0.20"/>
+<circle class="h-star" cx="661.8" cy="178.8" r="1.1" opacity="0.25"/>
+<circle class="h-star" cx="579.6" cy="320.6" r="0.6" opacity="0.15"/>
+<circle class="h-star" cx="755.8" cy="246.1" r="0.6" opacity="0.10"/>
+<circle class="h-star" cx="490.9" cy="178.4" r="0.6" opacity="0.24"/>
+<circle class="h-star" cx="484.3" cy="339.4" r="0.6" opacity="0.19"/>
+<circle class="h-star" cx="418.4" cy="127.6" r="1.1" opacity="0.17"/>
+<circle class="h-star" cx="845.6" cy="39.8" r="0.6" opacity="0.15"/>
+<circle class="h-star" cx="517.7" cy="178.9" r="1.1" opacity="0.10"/>
+<circle class="h-star" cx="380.2" cy="103.6" r="0.6" opacity="0.09"/>
+<circle class="h-star" cx="706.0" cy="228.8" r="1.1" opacity="0.14"/>
+<circle class="h-star" cx="536.8" cy="236.0" r="0.6" opacity="0.29"/>
+<circle class="h-star" cx="520.5" cy="216.8" r="1.1" opacity="0.09"/>
+<circle class="h-star" cx="741.8" cy="56.9" r="0.6" opacity="0.17"/>
+<circle class="h-star" cx="821.4" cy="178.8" r="0.6" opacity="0.18"/>
+<circle class="h-star" cx="624.5" cy="307.3" r="1.1" opacity="0.27"/>
+<circle class="h-star" cx="479.2" cy="151.9" r="0.6" opacity="0.23"/>
+<circle class="h-star" cx="533.9" cy="90.6" r="0.6" opacity="0.12"/>
+<circle class="h-star" cx="454.3" cy="91.5" r="1.1" opacity="0.26"/>
+<circle class="h-star" cx="427.7" cy="107.6" r="0.6" opacity="0.17"/>
+<circle class="h-star" cx="527.9" cy="202.0" r="0.6" opacity="0.23"/>
+<circle class="h-star" cx="606.3" cy="219.0" r="0.6" opacity="0.18"/>
+<circle class="h-star" cx="796.8" cy="330.0" r="1.1" opacity="0.17"/>
+<circle class="h-star" cx="541.2" cy="173.9" r="1.1" opacity="0.09"/>
+<circle class="h-star" cx="366.1" cy="83.3" r="0.6" opacity="0.10"/>
+<circle class="h-star" cx="652.0" cy="48.0" r="0.6" opacity="0.20"/>
+<circle class="h-star" cx="838.6" cy="217.8" r="0.6" opacity="0.27"/>
+<circle class="h-star" cx="659.1" cy="63.3" r="0.6" opacity="0.29"/>
+<circle class="h-star" cx="652.8" cy="171.4" r="0.6" opacity="0.27"/>
+<circle class="h-star" cx="862.3" cy="168.7" r="1.1" opacity="0.15"/>
+<circle class="h-star" cx="407.2" cy="262.9" r="0.6" opacity="0.19"/>
+<circle class="h-star" cx="700.9" cy="185.4" r="0.6" opacity="0.29"/>
+<circle class="h-star" cx="613.1" cy="62.7" r="0.6" opacity="0.25"/>
+<circle class="h-star" cx="489.8" cy="227.4" r="0.6" opacity="0.23"/>
+<circle class="h-star" cx="470.0" cy="135.7" r="0.6" opacity="0.16"/>
+<circle class="h-star" cx="449.4" cy="193.8" r="0.6" opacity="0.22"/>
+<circle class="h-star" cx="658.7" cy="275.7" r="0.6" opacity="0.26"/>
+<circle class="h-star" cx="768.6" cy="259.6" r="0.6" opacity="0.12"/>
+<circle cx="195" cy="178" r="150" fill="url(#h-core)" class="h-core"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="171.33" y1="154.33" x2="218.67" y2="154.33" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="171.33" y1="154.33" x2="171.33" y2="201.67" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="171.33" y1="154.33" x2="168.19" y2="151.19" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="218.67" y1="154.33" x2="218.67" y2="201.67" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="218.67" y1="154.33" x2="221.81" y2="151.19" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="171.33" y1="201.67" x2="218.67" y2="201.67" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="171.33" y1="201.67" x2="168.19" y2="204.81" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="218.67" y1="201.67" x2="221.81" y2="204.81" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="168.19" y1="151.19" x2="221.81" y2="151.19" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="168.19" y1="151.19" x2="168.19" y2="204.81" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="221.81" y1="151.19" x2="221.81" y2="204.81" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.00s" x1="168.19" y1="204.81" x2="221.81" y2="204.81" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="171.33" y1="154.33" x2="143.76" y2="126.76" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="218.67" y1="154.33" x2="246.24" y2="126.76" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="171.33" y1="201.67" x2="143.76" y2="229.24" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="218.67" y1="201.67" x2="246.24" y2="229.24" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="168.19" y1="151.19" x2="126.39" y2="109.39" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="221.81" y1="151.19" x2="263.61" y2="109.39" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="168.19" y1="204.81" x2="126.39" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:0.55s" x1="221.81" y1="204.81" x2="263.61" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="143.76" y1="126.76" x2="246.24" y2="126.76" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="143.76" y1="126.76" x2="143.76" y2="229.24" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="143.76" y1="126.76" x2="126.39" y2="109.39" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="246.24" y1="126.76" x2="246.24" y2="229.24" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="246.24" y1="126.76" x2="263.61" y2="109.39" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="143.76" y1="229.24" x2="246.24" y2="229.24" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="143.76" y1="229.24" x2="126.39" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="246.24" y1="229.24" x2="263.61" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="126.39" y1="109.39" x2="263.61" y2="109.39" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="126.39" y1="109.39" x2="126.39" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="263.61" y1="109.39" x2="263.61" y2="246.61" filter="url(#h-glow)"/>
+<line class="h-edge h-seam" style="--c0:#215a86;animation-delay:1.10s" x1="126.39" y1="246.61" x2="263.61" y2="246.61" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="171.33" cy="154.33" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="218.67" cy="154.33" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="171.33" cy="201.67" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="218.67" cy="201.67" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="168.19" cy="151.19" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="221.81" cy="151.19" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="168.19" cy="204.81" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:0.00s" cx="221.81" cy="204.81" r="2.01" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="143.76" cy="126.76" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="246.24" cy="126.76" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="143.76" cy="229.24" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="246.24" cy="229.24" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="126.39" cy="109.39" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="263.61" cy="109.39" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="126.39" cy="246.61" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<circle class="h-vert" style="animation-delay:1.10s" cx="263.61" cy="246.61" r="3.19" fill="#eafcff" filter="url(#h-glow)"/>
+<g class="h-orbit" style="transform-origin:195px 178px;animation-duration:14s;animation-delay:0.00s"><rect x="319.5" y="174.5" width="7" height="7" fill="none" stroke="#7dd8e8" stroke-width="1.1" filter="url(#h-glow)"/></g>
+<g class="h-orbit" style="transform-origin:195px 178px;animation-duration:18s;animation-delay:-4.50s"><rect x="341.5" y="174.5" width="7" height="7" fill="none" stroke="#7dd8e8" stroke-width="1.1" filter="url(#h-glow)"/></g>
+<g class="h-orbit" style="transform-origin:195px 178px;animation-duration:22s;animation-delay:-12.22s"><rect x="299.5" y="174.5" width="7" height="7" fill="none" stroke="#7dd8e8" stroke-width="1.1" filter="url(#h-glow)"/></g>
+<text class="h-mirrors" x="40" y="332">UNTRUSTED MIRRORS &#8212; FETCHED FROM ANYWHERE, <tspan class="cy">PROVEN IDENTICAL</tspan></text>
+<text class="h-eyebrow" x="372" y="46">VERIFIED BY DEFAULT</text>
+<text class="h-word" x="370" y="108">TESSERA</text>
+<text class="h-tag" x="372" y="136">Poisoning-resistant distribution for ML models &amp; datasets.</text>
+<text class="h-motto" x="372" y="168">Trust the signature.</text>
+<text class="h-motto2" x="372" y="194">Never the transport.</text>
+<rect x="372" y="216" width="468" height="92" fill="#08141c" stroke="#1c2b40"/>
+<text class="h-term" x="388" y="240"><tspan class="p">$</tspan> tessera fetch acme-lab/bert-tiny@1.2.0</text>
+<text class="h-term" x="388" y="260"><tspan class="ok">&#10003;</tspan> manifest  <tspan class="em">b3:77e1&#8230;</tspan>  sig ok, name/version match</text>
+<text class="h-term" x="388" y="280"><tspan class="ok">&#10003;</tspan> chunks    <tspan class="em">1319/1319</tspan> verified across 3 peers</text>
+<text class="h-term" x="388" y="300"><tspan class="no">&#10007;</tspan> mirror-2 flagged &#8212; <tspan class="cy">artifact still verified</tspan></text>
+<rect class="h-chip" x="372.0" y="322.0" width="119.8" height="24"/>
+<text class="h-chip-t" x="385.0" y="338.0">TAMPER-EVIDENT</text>
+<rect class="h-chip" x="501.8" y="322.0" width="106.4" height="24"/>
+<text class="h-chip-t" x="514.8" y="338.0">REPLAY-PROOF</text>
+<rect class="h-chip" x="618.2" y="322.0" width="133.2" height="24"/>
+<text class="h-chip-t" x="631.2" y="338.0">REVOCATION-AWARE</text>
+<rect class="h-chip" x="761.4" y="322.0" width="146.6" height="24"/>
+<text class="h-chip-t" x="774.4" y="338.0">PROVENANCE-TRACKED</text>
+</svg>
